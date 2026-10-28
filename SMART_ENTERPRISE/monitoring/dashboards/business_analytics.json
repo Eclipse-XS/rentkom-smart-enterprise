@@ -1,0 +1,340 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Всього заявок (Total Requests)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS value FROM service_requests;",
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Нові заявки (New Ingress)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS value FROM service_requests WHERE status = 'NEW';",
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Завершено консультацій (Completed)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS value FROM service_requests WHERE status = 'COMPLETED';",
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Кількість відгуків (Feedbacks)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS value FROM customer_feedbacks;",
+          "refId": "A",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Сервісний рейтинг CSAT (1-5)",
+      "type": "gauge",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COALESCE(ROUND(AVG(service_rating)::numeric, 2), 0) AS value FROM customer_feedbacks;",
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 1,
+          "max": 5,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 3.5
+              },
+              {
+                "color": "green",
+                "value": 4.5
+              }
+            ]
+          }
+        }
+      },
+      "description": "Customer Satisfaction Score (CSAT) за 5-бальною шкалою Лайкерта за результатами оцінки якості консультацій."
+    },
+    {
+      "id": 6,
+      "title": "Рейтинг рієлторів CSAT (1-5)",
+      "type": "gauge",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COALESCE(ROUND(AVG(realtor_rating)::numeric, 2), 0) AS value FROM customer_feedbacks;",
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 1,
+          "max": 5,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 3.5
+              },
+              {
+                "color": "green",
+                "value": 4.5
+              }
+            ]
+          }
+        }
+      },
+      "description": "Customer Satisfaction Score (CSAT) за 5-бальною шкалою оцінки професіоналізму закріпленого рієлтора."
+    },
+    {
+      "id": 7,
+      "title": "Розподіл за статусом життєвого циклу (Status Funnel)",
+      "type": "piechart",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT status, COUNT(*) AS count FROM service_requests GROUP BY status;",
+          "refId": "A",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Розподіл за типами нерухомості (Property Types)",
+      "type": "barchart",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT property_type, COUNT(*) AS count FROM service_requests GROUP BY property_type ORDER BY count DESC;",
+          "refId": "A",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Мета звернення (Request Purpose)",
+      "type": "barchart",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT request_purpose, COUNT(*) AS count FROM service_requests GROUP BY request_purpose ORDER BY count DESC;",
+          "refId": "A",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Динаміка надходження заявок у часі (Intake Timeline)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT DATE_TRUNC('day', created_at) AS time, COUNT(*) AS count FROM service_requests GROUP BY 1 ORDER BY 1;",
+          "refId": "A",
+          "format": "table"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "rentkom",
+    "business",
+    "analytics"
+  ],
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "title": "Rentkom: Business Analytics & Operational Funnel",
+  "uid": "rentkom-business-analytics",
+  "version": 1
+}

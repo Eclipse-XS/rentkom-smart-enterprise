@@ -1,0 +1,142 @@
+{
+  "id": "LAB6Ingestion01",
+  "name": "LAB6 | Агентство нерухомості | Індексація документів",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "База знань агентства нерухомості",
+        "formDescription": "Завантаження PDF і DOCX документів для індексації у Qdrant",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Документи",
+              "fieldType": "file",
+              "acceptFileTypes": ".pdf,.docx",
+              "requiredField": true,
+              "multipleFiles": true
+            }
+          ]
+        },
+        "options": {
+          "respondWithOptions": {
+            "values": {
+              "formSubmittedText": "Документи прийнято та проіндексовано"
+            }
+          }
+        }
+      },
+      "id": "3f0b0b1d-ea9b-4ed5-8d3c-100000000001",
+      "name": "Завантаження документів",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.3,
+      "position": [240, 300],
+      "webhookId": "lab6-real-estate-knowledge-upload"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "rag_real_estate",
+          "mode": "id"
+        },
+        "embeddingBatchSize": 20,
+        "options": {
+          "contentPayloadKey": "content",
+          "metadataPayloadKey": "metadata"
+        }
+      },
+      "id": "3f0b0b1d-ea9b-4ed5-8d3c-100000000002",
+      "name": "Qdrant Vector Store",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.3,
+      "position": [520, 300],
+      "credentials": {
+        "qdrantApi": {
+          "id": "Ntr00wfW3KA7ZmrR",
+          "name": "Qdrant account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "mxbai-embed-large",
+        "options": {}
+      },
+      "id": "3f0b0b1d-ea9b-4ed5-8d3c-100000000003",
+      "name": "Embeddings Ollama",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOllama",
+      "typeVersion": 1,
+      "position": [420, 520],
+      "credentials": {
+        "ollamaApi": {
+          "id": "CiIHbLPwsosTWHf6",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "binary",
+        "binaryMode": "allInputData",
+        "loader": "auto",
+        "textSplittingMode": "custom",
+        "options": {
+          "splitPages": true,
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "source",
+                "value": "={{ $binary.fileName }}"
+              },
+              {
+                "name": "lab",
+                "value": "LAB6"
+              }
+            ]
+          }
+        }
+      },
+      "id": "3f0b0b1d-ea9b-4ed5-8d3c-100000000004",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [620, 520]
+    },
+    {
+      "parameters": {
+        "chunkSize": 400,
+        "chunkOverlap": 100
+      },
+      "id": "3f0b0b1d-ea9b-4ed5-8d3c-100000000005",
+      "name": "Recursive Character Text Splitter",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [660, 700]
+    }
+  ],
+  "connections": {
+    "Завантаження документів": {
+      "main": [[{"node": "Qdrant Vector Store", "type": "main", "index": 0}]]
+    },
+    "Embeddings Ollama": {
+      "ai_embedding": [[{"node": "Qdrant Vector Store", "type": "ai_embedding", "index": 0}]]
+    },
+    "Default Data Loader": {
+      "ai_document": [[{"node": "Qdrant Vector Store", "type": "ai_document", "index": 0}]]
+    },
+    "Recursive Character Text Splitter": {
+      "ai_textSplitter": [[{"node": "Default Data Loader", "type": "ai_textSplitter", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "3f0b0b1d-ea9b-4ed5-8d3c-100000000006",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

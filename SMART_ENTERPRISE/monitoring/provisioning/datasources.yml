@@ -1,0 +1,23 @@
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL Real Estate
+    uid: lab5-postgres
+    type: postgres
+    access: proxy
+    url: "127.0.0.1:5432"
+    user: "lab4_user"
+    isDefault: true
+    jsonData:
+      database: "lab4_real_estate"
+      sslmode: disable
+      postgresVersion: 1800
+      timescaledb: false
+    secureJsonData:
+      password: "VadymGone123"
+  - name: n8n Google Sheets API
+    uid: lab5-json-api
+    type: marcusolsson-json-datasource
+    access: proxy
+    url: "http://127.0.0.1:5678/webhook/lab5/customer-satisfaction"
+    jsonData: {}

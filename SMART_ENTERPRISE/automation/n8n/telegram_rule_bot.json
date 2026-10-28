@@ -1,0 +1,136 @@
+{
+  "name": "Rentkom: Telegram Bot Rule-Based Fallback",
+  "nodes": [
+    {
+      "parameters": { "updates": ["message"], "additionalFields": {} },
+      "id": "b37e07f2-3ac4-4d31-a4e0-b13e501c8cd1",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [-720, 0],
+      "webhookId": "7ce2e0b5-7c63-4e78-b4d7-f89e783265ac"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [{ "id": "c-start", "leftValue": "={{$json[\"message\"][\"text\"]}}", "rightValue": "/start", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "/start"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [{ "id": "c-process", "leftValue": "={{$json[\"message\"][\"text\"]}}", "rightValue": "Процес купівлі/продажу", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Процес"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [{ "id": "c-landlord", "leftValue": "={{$json[\"message\"][\"text\"]}}", "rightValue": "Послуги для орендодавців", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Орендодавці"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra", "renameFallbackOutput": "Інше", "allMatchingOutputs": false }
+      },
+      "id": "8a17b924-855c-4a1c-a99b-bd70e79a79a0",
+      "name": "Route Message",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [-480, 0]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{$json[\"message\"][\"chat\"][\"id\"]}}",
+        "text": "Вітаємо у навчальному чат-боті агентства нерухомості «Рентком»!\nОберіть потрібний розділ:",
+        "replyMarkup": "replyKeyboard",
+        "replyKeyboard": {
+          "rows": [
+            { "row": { "buttons": [{ "text": "Процес купівлі/продажу", "additionalFields": {} }] } },
+            { "row": { "buttons": [{ "text": "Послуги для орендодавців", "additionalFields": {} }] } }
+          ]
+        },
+        "replyKeyboardOptions": { "resize_keyboard": true },
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "ec9e6cb4-2e30-43c7-aeb8-3c644d377147",
+      "name": "Start Greeting",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [-160, -240]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{$json[\"message\"][\"chat\"][\"id\"]}}",
+        "text": "Процес купівлі/продажу:\n\n1. Звернення та визначення потреб: бюджет, район, тип об’єкта, площа, кількість кімнат і строки.\n2. Підбір об’єктів за визначеними критеріями.\n3. Узгодження та проведення переглядів.\n4. Вибір відповідного об’єкта.\n5. Перевірка необхідних документів компетентним фахівцем.\n6. Переговори щодо ціни, строків і умов розрахунку.\n7. Підготовка угоди: за потреби завдаток, договір, нотаріальне оформлення та розрахунок.\n8. Передача об’єкта і ключів, завершення угоди.",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "606457d7-e04f-44dc-a7f4-3efac8e8845c",
+      "name": "Buying Selling Process",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [-160, -80]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{$json[\"message\"][\"chat\"][\"id\"]}}",
+        "text": "Послуги для орендодавців у навчальному сценарії:\n\n• консультація та визначення умов здачі;\n• підготовка і презентація об’єкта;\n• розміщення та просування пропозиції;\n• пошук потенційного орендаря і первинний відбір кандидатів;\n• організація переглядів та погодження умов;\n• підготовка інформації і документів для оформлення;\n• супровід укладення договору та передачі об’єкта;\n• подальша комунікація й координація питань у межах управління об’єктом.",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "c9dd8a7f-0b4e-46d7-9631-7fc132469a47",
+      "name": "Landlord Services",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [-160, 80]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{$json[\"message\"][\"chat\"][\"id\"]}}",
+        "text": "Не вдалося розпізнати запит.\n\nЯ можу надати інформацію про:\n• процес купівлі/продажу;\n• послуги для орендодавців.\n\nСкористайтеся кнопками меню або надішліть /start.",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "d7810b42-bac2-4a2c-8a45-f4390bb333b5",
+      "name": "Fallback Response",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [-160, 240]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": { "main": [[{ "node": "Route Message", "type": "main", "index": 0 }]] },
+    "Route Message": {
+      "main": [
+        [{ "node": "Start Greeting", "type": "main", "index": 0 }],
+        [{ "node": "Buying Selling Process", "type": "main", "index": 0 }],
+        [{ "node": "Landlord Services", "type": "main", "index": 0 }],
+        [{ "node": "Fallback Response", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "84cb87ae-e291-47a1-85c7-8cd5cc96e36a",
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}

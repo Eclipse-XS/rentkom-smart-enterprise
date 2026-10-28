@@ -1,0 +1,522 @@
+{
+  "id": "RentkomTelegramUnified01",
+  "name": "Rentkom Unified Telegram Router (LR2 + LR6)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "u-node-tg-trigger",
+      "name": "Telegram Ingress",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        100,
+        320
+      ],
+      "webhookId": "rentkom-telegram-ingress-webhook",
+      "credentials": {
+        "telegramApi": {
+          "id": "egDthAT3oVlnSRjQ",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rentkom-unified-router-test",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "u-node-test-webhook",
+      "name": "Test Webhook Ingress",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        100,
+        140
+      ],
+      "webhookId": "rentkom-unified-router-test"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/v1/telegram/inbox/guard",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { update_id: ($json.body && $json.body.update_id) ? $json.body.update_id : $json.update_id ? $json.update_id : null, chat_id: ($json.message && $json.message.chat) ? $json.message.chat.id : ($json.body && $json.body.message && $json.body.message.chat) ? $json.body.message.chat.id : ($json.body && $json.body.chat_id) ? $json.body.chat_id : 12345, text: ($json.message && $json.message.text) ? $json.message.text : ($json.body && $json.body.message && $json.body.message.text) ? $json.body.message.text : ($json.body && $json.body.text) ? $json.body.text : ($json.text ? $json.text : ''), is_test: Boolean(($json.headers && ($json.headers['x-test-token'] || $json.headers['X-Test-Token'])) || ($json.body && $json.body.is_test)) } }}",
+        "options": {
+          "timeout": 15000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Test-Token",
+              "value": "={{ ($json.headers && $json.headers['x-test-token']) ? $json.headers['x-test-token'] : '' }}"
+            },
+            {
+              "name": "X-Internal-Token",
+              "value": "={{ ($json.headers && $json.headers['x-internal-token']) ? $json.headers['x-internal-token'] : '' }}"
+            }
+          ]
+        }
+      },
+      "id": "u-node-inbox-guard",
+      "name": "Acquire Telegram Inbox Guard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        360,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-execute",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "EXECUTE",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "u-node-is-new-update",
+      "name": "Is New Update?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        600,
+        220
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "u-node-drop-duplicate",
+      "name": "Drop Duplicate Update",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        840,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c-start",
+                    "leftValue": "={{ $json.text }}",
+                    "rightValue": "/start",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Start Menu"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c-buy",
+                    "leftValue": "={{ $json.text }}",
+                    "rightValue": "купівл",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Купівля/Продаж"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c-landlord",
+                    "leftValue": "={{ $json.text }}",
+                    "rightValue": "оренд",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Орендодавцям"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "AI RAG запит",
+          "allMatchingOutputs": false
+        }
+      },
+      "id": "u-node-switch",
+      "name": "Intelligent Message Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        840,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/v1/telegram/mock-dispatcher",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Вітаємо в інформаційній системі агентства нерухомості «Рентком» (м. Львів)!\\n\\nВи можете скористатися швидким меню або поставити будь-яке запитання з нерухомості нашому ШІ-консультанту.' } }}",
+        "options": {
+          "timeout": 15000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "u-node-greeting",
+      "name": "Greeting & Persistent Keyboard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        140
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomInternalAuth",
+          "name": "Rentkom Internal Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/v1/telegram/mock-dispatcher",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: '🏢 *Процес купівлі нерухомості у «Рентком»:*\\n\\n1. Формування запиту та бюджету.\\n2. Підбір актуальних пропозицій.\\n3. Організація оглядів об’єктів.\\n4. Перевірка правовстановлюючих документів та ланцюга набуття.\\n5. Узгодження завдатку, нотаріальне посвідчення угоди.\\n6. Акт приймання-передачі та ключі.' } }}",
+        "options": {
+          "timeout": 15000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "u-node-buying",
+      "name": "Buying Process Handler",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        280
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomInternalAuth",
+          "name": "Rentkom Internal Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/v1/telegram/mock-dispatcher",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: '🔑 *Послуги для орендодавців:*\\n\\n• Професійна фотозйомка та презентація об’єкта;\\n• Таргетоване просування та відбір орендарів;\\n• Юридичний супровід договору оренди та опис майна;\\n• Подальша підтримка та управління орендою.' } }}",
+        "options": {
+          "timeout": 15000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "u-node-landlord",
+      "name": "Landlord Services Handler",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        420
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomInternalAuth",
+          "name": "Rentkom Internal Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/v1/rag/ask",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { question: $('Acquire Telegram Inbox Guard').item.json.text } }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "onError": "continueRegularOutput",
+      "id": "u-node-rag-core",
+      "name": "Query RAG Core API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/v1/telegram/mock-dispatcher",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: $json.answer ? $json.answer + ($json.sources && $json.sources.length ? '\\n\\n📚 [Джерела: ' + $json.sources.join(', ') + ']' : '') : 'Вибачте, сервіс консультацій тимчасово недоступний. Будь ласка, зверніться за номером +38 (032) 240-00-00.' } }}",
+        "options": {
+          "timeout": 15000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "u-node-send-ai-response",
+      "name": "Send AI / Fallback Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1380,
+        580
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomInternalAuth",
+          "name": "Rentkom Internal Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/v1/telegram/inbox/complete",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { update_id: $('Acquire Telegram Inbox Guard').item.json.update_id, route: 'Executed', response_text: $json.result ? $json.result.text : 'OK' } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "u-node-inbox-complete",
+      "name": "Finalize Telegram Inbox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1640,
+        360
+      ]
+    }
+  ],
+  "connections": {
+    "Telegram Ingress": {
+      "main": [
+        [
+          {
+            "node": "Acquire Telegram Inbox Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Webhook Ingress": {
+      "main": [
+        [
+          {
+            "node": "Acquire Telegram Inbox Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acquire Telegram Inbox Guard": {
+      "main": [
+        [
+          {
+            "node": "Is New Update?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is New Update?": {
+      "main": [
+        [
+          {
+            "node": "Intelligent Message Router",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Drop Duplicate Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intelligent Message Router": {
+      "main": [
+        [
+          {
+            "node": "Greeting & Persistent Keyboard",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Buying Process Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Landlord Services Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Query RAG Core API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Greeting & Persistent Keyboard": {
+      "main": [
+        [
+          {
+            "node": "Finalize Telegram Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buying Process Handler": {
+      "main": [
+        [
+          {
+            "node": "Finalize Telegram Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Landlord Services Handler": {
+      "main": [
+        [
+          {
+            "node": "Finalize Telegram Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query RAG Core API": {
+      "main": [
+        [
+          {
+            "node": "Send AI / Fallback Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send AI / Fallback Response": {
+      "main": [
+        [
+          {
+            "node": "Finalize Telegram Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

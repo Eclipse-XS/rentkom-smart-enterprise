@@ -1,0 +1,201 @@
+# ==============================================================================
+# RENTKOM SMART ENTERPRISE: UNIFIED DOCKER COMPOSE CONFIGURATION
+# Profiles:
+#   - demo: Core PostgreSQL + FastAPI Business Core + Grafana + Qdrant (Zero credentials needed)
+#   - connected: Adds n8n workflow engine for live webhooks & external services
+#   - full-ai: Adds containerized Ollama daemon alongside Qdrant
+# ==============================================================================
+
+name: rentkom-smart-enterprise
+
+networks:
+  rentkom-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  ollama_data:
+  grafana_data:
+  n8n_data:
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. PostgreSQL Relational Persistence Layer
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: rentkom-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-lab4_real_estate}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./SMART_ENTERPRISE/database/init_db.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-lab4_real_estate}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rentkom-net
+    profiles: ["demo", "connected", "full-ai", "dedicated-worker"]
+
+  # ----------------------------------------------------------------------------
+  # 2. Python Business Core & Transactional Outbox (FastAPI)
+  # ----------------------------------------------------------------------------
+  business-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rentkom-business-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-lab4_real_estate}
+      NOTIFICATION_PROVIDER: ${NOTIFICATION_PROVIDER:-mock}
+      ENVIRONMENT: ${ENVIRONMENT:-demo}
+      OLLAMA_BASE_URL: http://${OLLAMA_HOST:-ollama}:11434
+      QDRANT_HOST: ${DOCKER_QDRANT_HOST:-qdrant}
+      QDRANT_PORT: 6333
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rentkom.lviv.ua}
+      RUN_OUTBOX_WORKER_IN_LIFESPAN: ${RUN_OUTBOX_WORKER_IN_LIFESPAN:-true}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - rentkom-net
+    profiles: ["demo", "connected", "full-ai", "dedicated-worker"]
+
+  # ----------------------------------------------------------------------------
+  # 2b. Standalone Transactional Outbox Worker (Production Mode)
+  # ----------------------------------------------------------------------------
+  outbox-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rentkom-outbox-worker
+    command: ["python", "-m", "core.services.outbox_worker_daemon"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-lab4_real_estate}
+      NOTIFICATION_PROVIDER: ${NOTIFICATION_PROVIDER:-mock}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rentkom.lviv.ua}
+    networks:
+      - rentkom-net
+    profiles: ["dedicated-worker"]
+
+  # ----------------------------------------------------------------------------
+  # 3. Qdrant Vector Knowledge Base
+  # ----------------------------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:v1.12.1
+    container_name: rentkom-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 && echo -e \"GET /healthz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3 && cat <&3 | grep -q \"200 OK\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rentkom-net
+    profiles: ["demo", "connected", "full-ai", "dedicated-worker"]
+
+  # ----------------------------------------------------------------------------
+  # 4. Grafana Dual-Dashboard Observability Layer
+  # ----------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: rentkom-grafana
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      business-api:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-lab4_real_estate}
+      API_HOST: business-api
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./SMART_ENTERPRISE/monitoring/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./SMART_ENTERPRISE/monitoring/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./SMART_ENTERPRISE/monitoring/dashboards:/etc/grafana/provisioning/dashboards/json:ro
+    networks:
+      - rentkom-net
+    profiles: ["demo", "connected", "full-ai", "dedicated-worker"]
+
+  # ----------------------------------------------------------------------------
+  # 5. n8n Automation Engine (Connected Mode)
+  # ----------------------------------------------------------------------------
+  n8n:
+    image: n8nio/n8n:1.64.3
+    container_name: rentkom-n8n
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      business-api:
+        condition: service_healthy
+    environment:
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
+      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL:-http://localhost:5678/}
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-lab4_real_estate}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-postgres}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DB_POSTGRESDB_SCHEMA: public
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - rentkom-net
+    profiles: ["demo", "connected", "full-ai"]
+
+  # ----------------------------------------------------------------------------
+  # 6. Containerized Ollama Inference (Full AI Mode)
+  # ----------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rentkom-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - rentkom-net
+    profiles: ["full-ai"]

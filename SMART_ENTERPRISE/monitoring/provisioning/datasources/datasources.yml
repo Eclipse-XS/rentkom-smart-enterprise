@@ -1,0 +1,24 @@
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL Real Estate
+    uid: lab5-postgres
+    type: postgres
+    access: proxy
+    url: "${POSTGRES_HOST:-postgres}:5432"
+    user: "${POSTGRES_USER:-postgres}"
+    isDefault: true
+    jsonData:
+      database: "${POSTGRES_DB:-lab4_real_estate}"
+      sslmode: disable
+      postgresVersion: 1500
+      timescaledb: false
+    secureJsonData:
+      password: "${POSTGRES_PASSWORD:-postgres}"
+
+  - name: Rentkom Business Core API
+    uid: rentkom-core-api
+    type: marcusolsson-json-datasource
+    access: proxy
+    url: "http://${API_HOST:-business-api}:8000/api/v1/analytics/summary"
+    jsonData: {}

@@ -1,0 +1,153 @@
+{
+  "updatedAt": "2026-10-28T14:15:00.000Z",
+  "createdAt": "2026-10-07T22:43:57.367Z",
+  "id": "gaPyYUSgGKVK2vKc",
+  "name": "Rentkom: Customer Feedback Ingestion & Telegram Channel Alert",
+  "description": "Google Form / Sheets Feedback to PostgreSQL customer_feedbacks with Telegram notifications",
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "documentId": {
+          "__rl": true,
+          "value": "1HKEQsxQF0g_bTK3Bp0oOgQ-ctMKzLoKMPeHbX2F42EQ",
+          "mode": "list",
+          "cachedResultName": "OI43 Lab3 - Відгуки агентства нерухомості",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HKEQsxQF0g_bTK3Bp0oOgQ-ctMKzLoKMPeHbX2F42EQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 807405737,
+          "mode": "list",
+          "cachedResultName": "Ответы на форму (1)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HKEQsxQF0g_bTK3Bp0oOgQ-ctMKzLoKMPeHbX2F42EQ/edit#gid=807405737"
+        },
+        "event": "rowAdded",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheetsTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "8d330fed-9421-49c8-9233-3927d391f42b",
+      "name": "Google Sheets Trigger",
+      "credentials": {
+        "googleSheetsTriggerOAuth2Api": {
+          "id": "w2ZVcryJf7CxkU0H",
+          "name": "Google Sheets | OI43 Lab3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rentkom-feedback-test",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        180
+      ],
+      "id": "u-node-fb-test-webhook",
+      "name": "Test Feedback Webhook",
+      "webhookId": "rentkom-feedback-test"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/v1/feedbacks/",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { client_identifier: ($json.body && $json.body[\"Ім’я клієнта\"]) ? $json.body[\"Ім’я клієнта\"] : ($json[\"Ім’я клієнта\"]) ? $json[\"Ім’я клієнта\"] : ($json.body && $json.body.client_identifier) ? $json.body.client_identifier : $json.client_identifier ? $json.client_identifier : 'Анонімний клієнт', service_rating: Number(($json.body && $json.body[\"Оцінка сервісу\"]) ? $json.body[\"Оцінка сервісу\"] : ($json[\"Оцінка сервісу\"]) ? $json[\"Оцінка сервісу\"] : ($json.body && $json.body.service_rating) ? $json.body.service_rating : $json.service_rating ? $json.service_rating : 5), realtor_rating: Number(($json.body && $json.body[\"Оцінка рієлтора\"]) ? $json.body[\"Оцінка рієлтора\"] : ($json[\"Оцінка рієлтора\"]) ? $json[\"Оцінка рієлтора\"] : ($json.body && $json.body.realtor_rating) ? $json.body.realtor_rating : $json.realtor_rating ? $json.realtor_rating : 5), feedback_text: (($json.body && $json.body[\"Що було зручно?\"]) ? 'Зручно: ' + $json.body[\"Що було зручно?\"] + '. ' : ($json[\"Що було зручно?\"]) ? 'Зручно: ' + $json[\"Що було зручно?\"] + '. ' : '') + (($json.body && $json.body[\"Що викликало труднощі?\"]) ? 'Труднощі: ' + $json.body[\"Що викликало труднощі?\"] : ($json[\"Що викликало труднощі?\"]) ? 'Труднощі: ' + $json[\"Що викликало труднощі?\"] : '') || ($json.body && $json.body.feedback_text ? $json.body.feedback_text : $json.feedback_text ? $json.feedback_text : ''), source_channel: 'GOOGLE_SHEETS', source_row_id: String(($json.body && $json.body.row_number) ? $json.body.row_number : $json.row_number ? $json.row_number : ($json.body && $json.body.id) ? $json.body.id : $json.id ? $json.id : '') } }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        90
+      ],
+      "id": "u-node-persist-feedback-pg",
+      "name": "Persist Feedback to PostgreSQL API"
+    },
+    {
+      "parameters": {
+        "chatId": "684809016",
+        "text": "=🌟 *Новий відгук про агентство нерухомості «Рентком»*\n\nКлієнт: {{$json.client_identifier}}\nОцінка сервісу: {{$json.service_rating}}/5 ⭐\nОцінка рієлтора: {{$json.realtor_rating}}/5 ⭐\nКоментар: {{$json.feedback_text || 'Без додаткового коментаря'}}\nСтатус збереження: Успішно збережено в системі (ID: {{$json.id}})",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        540,
+        90
+      ],
+      "id": "0a1e7755-0d83-4afe-b817-5a819d2818ee",
+      "name": "Send Telegram Notification",
+      "continueOnFail": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "egDthAT3oVlnSRjQ",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Google Sheets Trigger": {
+      "main": [
+        [
+          {
+            "node": "Persist Feedback to PostgreSQL API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Feedback Webhook": {
+      "main": [
+        [
+          {
+            "node": "Persist Feedback to PostgreSQL API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Feedback to PostgreSQL API": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  }
+}

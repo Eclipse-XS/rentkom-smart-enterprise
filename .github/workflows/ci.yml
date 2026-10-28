@@ -1,0 +1,39 @@
+name: Rentkom CI
+
+on:
+  push:
+    branches: [ main, feature/* ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Unit & Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: System Health & Doctor Check
+        run: |
+          python tools/manage.py doctor
+
+      - name: Run Automated Test Suite
+        run: |
+          pytest tests/ -v --tb=short
+
+      - name: Verify Demo Seeding
+        run: |
+          python tools/seed_demo_data.py

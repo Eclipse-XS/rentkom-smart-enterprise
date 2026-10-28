@@ -1,0 +1,72 @@
+# Environments & Secrets
+.env
+*.env
+!.env.example
+*.pem
+*.key
+*.token
+credentials.json
+*_credentials.json
+credentials/
+
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Databases & Local Runtimes
+*.sqlite
+*.sqlite3
+*.db
+runtime/
+snapshots/
+backups/
+tmp/
+*.log
+*.pid
+
+# Heavy binary distributions & models
+LAB5/grafana-v11.3.0/
+LAB6/runtime/
+SMART_ENTERPRISE/runtime/
+SMART_ENTERPRISE/backups/
+*.zip
+
+# Node / JS
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & Editor
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
+.DS_Store
+.qdrant-initialized
+pg_isolated_cluster/

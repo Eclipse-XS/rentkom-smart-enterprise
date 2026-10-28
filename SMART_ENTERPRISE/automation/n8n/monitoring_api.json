@@ -1,0 +1,44 @@
+{
+  "id": "LAB5MonitoringAPI1",
+  "name": "LAB5 | Агентство нерухомості | Monitoring API",
+  "nodes": [
+    {
+      "parameters": {"httpMethod":"GET","path":"lab5/property-popularity","responseMode":"responseNode","options":{}},
+      "id":"webhook-properties","name":"API популярності нерухомості","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[0,0],"webhookId":"lab5-property-popularity"
+    },
+    {
+      "parameters": {"operation":"executeQuery","query":"SELECT property_type, COUNT(*)::int AS request_count\nFROM public.real_estate_requests\nGROUP BY property_type\nORDER BY request_count DESC, property_type;","options":{}},
+      "id":"postgres-aggregate","name":"PostgreSQL: популярність типів","type":"n8n-nodes-base.postgres","typeVersion":2.6,"position":[240,0],
+      "credentials":{"postgres":{"id":"0hyM64j1c9hxAiq7","name":"Postgres account"}}
+    },
+    {
+      "parameters":{"respondWith":"allIncomingItems","options":{"responseHeaders":{"entries":[{"name":"Content-Type","value":"application/json; charset=utf-8"}]}}},
+      "id":"respond-properties","name":"Відповідь: типи нерухомості","type":"n8n-nodes-base.respondToWebhook","typeVersion":1.4,"position":[480,0]
+    },
+    {
+      "parameters":{"httpMethod":"GET","path":"lab5/customer-satisfaction","responseMode":"responseNode","options":{}},
+      "id":"webhook-ratings","name":"API задоволеності клієнтів","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[0,280],"webhookId":"lab5-customer-satisfaction"
+    },
+    {
+      "parameters":{"operation":"read","documentId":{"__rl":true,"value":"1HKEQsxQF0g_bTK3Bp0oOgQ-ctMKzLoKMPeHbX2F42EQ","mode":"list","cachedResultName":"OI43 Lab3 - Відгуки агентства нерухомості"},"sheetName":{"__rl":true,"value":807405737,"mode":"list","cachedResultName":"Ответы на форму (1)"},"options":{}},
+      "id":"sheets-read","name":"Google Sheets: відгуки","type":"n8n-nodes-base.googleSheets","typeVersion":4.7,"position":[240,280],
+      "credentials":{"googleSheetsOAuth2Api":{"id":"LAB5SheetsCred1","name":"Google Sheets | OI43 LAB5"}}
+    },
+    {
+      "parameters":{"jsCode":"const rows = $input.all().map(i => i.json);\nconst groups = new Map();\nfor (const row of rows) {\n  const raw = String(row['Дата звернення'] ?? '').trim();\n  const m = raw.match(/^(\\d{2})[.\\/-](\\d{2})[.\\/-](\\d{4})$/);\n  const date = m ? `${m[3]}-${m[2]}-${m[1]}` : raw.slice(0,10);\n  const service = Number(String(row['Оцінка сервісу'] ?? '').replace(',', '.'));\n  const realtor = Number(String(row['Оцінка рієлтора'] ?? '').replace(',', '.'));\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || !Number.isFinite(service) || !Number.isFinite(realtor)) continue;\n  const g = groups.get(date) ?? {date, service_sum:0, realtor_sum:0, count:0};\n  g.service_sum += service; g.realtor_sum += realtor; g.count += 1; groups.set(date,g);\n}\nreturn [...groups.values()].sort((a,b)=>a.date.localeCompare(b.date)).map(g => ({json:{date:g.date,service_rating:Number((g.service_sum/g.count).toFixed(2)),realtor_rating:Number((g.realtor_sum/g.count).toFixed(2)),responses:g.count}}));"},
+      "id":"aggregate-ratings","name":"Агрегація оцінок за датою","type":"n8n-nodes-base.code","typeVersion":2,"position":[480,280]
+    },
+    {
+      "parameters":{"respondWith":"allIncomingItems","options":{"responseHeaders":{"entries":[{"name":"Content-Type","value":"application/json; charset=utf-8"}]}}},
+      "id":"respond-ratings","name":"Відповідь: часовий ряд","type":"n8n-nodes-base.respondToWebhook","typeVersion":1.4,"position":[720,280]
+    }
+  ],
+  "connections":{
+    "API популярності нерухомості":{"main":[[{"node":"PostgreSQL: популярність типів","type":"main","index":0}]]},
+    "PostgreSQL: популярність типів":{"main":[[{"node":"Відповідь: типи нерухомості","type":"main","index":0}]]},
+    "API задоволеності клієнтів":{"main":[[{"node":"Google Sheets: відгуки","type":"main","index":0}]]},
+    "Google Sheets: відгуки":{"main":[[{"node":"Агрегація оцінок за датою","type":"main","index":0}]]},
+    "Агрегація оцінок за датою":{"main":[[{"node":"Відповідь: часовий ряд","type":"main","index":0}]]}
+  },
+  "settings":{"executionOrder":"v1"},"active":false,"pinData":{},"tags":[]
+}

@@ -1,0 +1,485 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Pending Notifications (Outbox Pending)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS value FROM notification_outbox WHERE status = 'PENDING';",
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Overdue Pending Items (>5m past scheduled retry)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS value FROM notification_outbox WHERE status = 'PENDING' AND COALESCE(next_retry_at, created_at) < NOW() - INTERVAL '5 minutes';",
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Mock Deliveries (Demo Mode)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS value FROM notification_outbox WHERE status = 'MOCK_DELIVERED';",
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "description": "Сумарна кількість успішно оброблених повідомлень (включно з Mock Delivered та Provider Accepted)."
+    },
+    {
+      "id": 4,
+      "title": "Failed Notifications (Dead Letter)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS value FROM notification_outbox WHERE status = 'FAILED';",
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Real Provider Acceptance Success Rate",
+      "type": "gauge",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT CASE WHEN COUNT(*) FILTER (WHERE status IN ('PROVIDER_ACCEPTED', 'FAILED')) = 0 THEN NULL ELSE ROUND((COUNT(*) FILTER (WHERE status = 'PROVIDER_ACCEPTED')::numeric / COUNT(*) FILTER (WHERE status IN ('PROVIDER_ACCEPTED', 'FAILED')) * 100), 1) END AS value FROM notification_outbox;",
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 100,
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "green",
+                "value": 95
+              }
+            ]
+          }
+        }
+      },
+      "description": "Відсоток успішних доставок серед усіх завершених (Mock Delivered + Provider Accepted проти FAILED)."
+    },
+    {
+      "id": 6,
+      "title": "Retry Attempts (Сума повторних спроб)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COALESCE(SUM(retry_count), 0) AS value FROM notification_outbox;",
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Середня затримка доставки (Average Delivery Delay, сек)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(AVG(EXTRACT(EPOCH FROM (sent_at - created_at)))::numeric, 1) AS value FROM notification_outbox WHERE status IN ('MOCK_DELIVERED', 'PROVIDER_ACCEPTED', 'SENT') AND sent_at IS NOT NULL;",
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 30
+              },
+              {
+                "color": "red",
+                "value": 120
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Історія спроб доставки сповіщень (Delivery Attempts)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 18,
+        "x": 6,
+        "y": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT DATE_TRUNC('hour', attempted_at) AS time, status, COUNT(*) AS count FROM notification_attempts GROUP BY 1, 2 ORDER BY 1;",
+          "refId": "A",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "lineInterpolation": "linear",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisPlacement": "auto"
+          }
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Події аудиту системи (Recent System Audit Events)",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT created_at, event_type, entity_type, entity_id, details_json FROM audit_events ORDER BY created_at DESC LIMIT 15;",
+          "refId": "A",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 99,
+      "title": "Real Provider Acceptance (Live)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT COUNT(*) AS value FROM notification_outbox WHERE status = 'PROVIDER_ACCEPTED';",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 100,
+      "title": "Notification Retry Attempts",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT COALESCE(SUM(retry_count), 0) AS value FROM notification_outbox;",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    }
+  ],
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": [
+    "rentkom",
+    "observability",
+    "outbox",
+    "technical"
+  ],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "title": "Rentkom: Technical Observability & Delivery Health",
+  "uid": "rentkom-technical-obs",
+  "version": 2
+}
