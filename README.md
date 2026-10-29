@@ -12,7 +12,7 @@
 [![Docker Clean--Room](https://img.shields.io/badge/Docker%20Clean--Room-NOT%20VERIFIED-orange.svg)](#-9-known-limitations--operational-boundaries)
 [![Connected Mode](https://img.shields.io/badge/Connected%20Mode-Credentials%20Required-yellow.svg)](#-9-known-limitations--operational-boundaries)
 
-A modern, production-grade enterprise automation platform and AI knowledge system for real estate operations. Designed with an asynchronous **FastAPI Business Core**, **PostgreSQL transactional outbox & deduplication engine**, **n8n event-driven workflow orchestrator**, **hybrid RAG retrieval pipeline** (Qdrant + Ollama), and a dual **Grafana observability stack**.
+A modern enterprise automation prototype and domain RAG retrieval platform for real estate operations. Designed with an asynchronous **FastAPI Business Core**, **PostgreSQL transactional outbox & deduplication engine**, **n8n event-driven workflow orchestrator**, **hybrid RAG retrieval pipeline** (Qdrant + Ollama), and a dual **Grafana observability stack**.
 
 ---
 
@@ -22,9 +22,9 @@ Real estate agencies handle high-velocity, multi-channel client inquiries spanni
 
 **Rentkom Smart Enterprise** unifies fragmented communication channels into an integrated operational platform:
 
-- **100% Ingestion Reliability**: Eliminates lost leads via an **Idempotent Ingestion Inbox** and **Transactional Outbox Pattern** with exponential backoff retry.
+- **Idempotent Ingestion Inbox**: Prevents duplicate lead processing via an idempotent update guard and **Transactional Outbox Pattern** with exponential backoff retry.
 - **Client Profile Deduplication**: Natural-key customer resolution ensures multiple inquiries from the same client attach to a single persistent customer profile.
-- **Regulatory Legal Assistant (RAG)**: Instant, grounded legal and procedural consultations via local LLM retrieval over agency bylaws, minimizing human agent escalation.
+- **Regulatory Legal Assistant (RAG)**: Grounded legal and procedural consultations via local LLM retrieval over agency bylaws, minimizing human agent escalation.
 - **Full Operational Observability**: Dual Grafana dashboards providing real-time visibility into customer demand, pipeline conversion, outbox delivery health, and AI retrieval latency.
 - **Zero-Secret Demo Mode**: Deterministic, standalone local evaluation runnable without external credentials, alongside secure Connected Mode for live production deployments.
 
@@ -120,13 +120,14 @@ The **Unified Telegram Router** coordinates message handling:
 Agency inquiries regarding real estate legal formalities, earnest money (*завдаток*), title verification, and lease contracts are served by an offline, locally-hosted RAG pipeline:
 - **Retrieval Guardrails**: Active regex filtering detects prompt injection attempts and out-of-domain queries before calling vector storage.
 - **Colloquial Query Normalization**: Ukrainian colloquial terms (e.g., *хата*, *комірне*, *фатира*) are mapped to standard legal terminology for high-precision dense vector retrieval without altering user intent.
-- **Bounded Latency & Determinism**: Generation is constrained (`num_predict: 384`), providing ~2.5–3.5s response latency on edge hardware.
-- **Strict Hallucination Prevention**: If retrieval similarity falls below threshold, the model executes a verified fallback routing to live human agents.
+- **Constrained Token Generation**: Generation is bounded (`num_predict: 384`) with empirical latency P50 ≈ 33.8 s, P95 ≈ 39.4 s on a consumer host testbed without dedicated inference GPU (sub-3s observed on warm single-shot cache).
+- **Grounded Retrieval & Fallback Routing**: If retrieval similarity falls below threshold, the model executes a verified fallback routing to live human staff instead of ungrounded extrapolation.
 
-### 4.4 Observability & Metrics (Grafana Dual Dashboards)
-Dual pre-provisioned Grafana dashboards monitor 19 distinct metrics:
-1. **Business Analytics Dashboard**: Demand by district, inquiry status breakdown, customer conversion funnel, property type popularity, and client satisfaction distribution.
-2. **Technical Observability Dashboard**: API endpoint latency percentiles (p50/p95/p99), Outbox queue backlog, delivery success/failure rate, Dead-Letter-Queue status, and RAG retrieval latency.
+### 4.4 Observability & Metrics (Grafana Dashboards)
+Pre-provisioned Grafana dashboards monitor 26 metrics across 3 dashboards:
+1. **Business Analytics Dashboard** (10 panels): Demand by district, inquiry status breakdown, customer conversion funnel, property type popularity, and client satisfaction distribution.
+2. **Technical Observability Dashboard** (11 panels): API endpoint latency percentiles (p50/p95/p99), Outbox queue backlog, delivery success/failure rate, Dead-Letter-Queue status, and RAG retrieval latency.
+3. **Real Estate Monitoring Dashboard** (5 panels): Baseline operational summary and inquiry activity overview.
 
 ---
 
@@ -156,7 +157,7 @@ Dual pre-provisioned Grafana dashboards monitor 19 distinct metrics:
 
 Clone repository and set up environment:
 ```bash
-git clone https://github.com/rentkom/rentkom-smart-enterprise.git
+git clone https://github.com/Eclipse-XS/rentkom-smart-enterprise.git
 cd rentkom-smart-enterprise
 
 # Create virtual environment
@@ -193,9 +194,9 @@ Access endpoints:
 ### Option B: Docker Compose Deployment
 
 The project provides modular Docker Compose profiles:
-- `demo`: PostgreSQL + FastAPI Core + Grafana + Qdrant (Zero external API keys needed).
-- `connected`: Adds n8n workflow engine.
-- `full-ai`: Adds containerized Ollama daemon with local weights.
+- `demo`: Core stack including PostgreSQL, FastAPI Business Core, Qdrant vector database, Grafana, and the n8n workflow engine. Note: Ollama is NOT containerized in this profile; RAG connects to an external host Ollama daemon or operates in duty fallback mode.
+- `connected`: Activates live external integrations (Telegram Bot, Google Sheets, SMTP) when credentials are provided in `.env`.
+- `full-ai`: Extends the stack with a containerized Ollama daemon and local model weights.
 
 ```bash
 # 1. Start core demo services
@@ -204,10 +205,14 @@ docker compose --profile demo up -d --build
 # 2. Check service status
 docker compose ps
 
-# 3. Seed demo data
+# 3. Seed demo data (PostgreSQL)
 docker compose exec business-api python tools/seed_demo_data.py
 
-# 4. View Grafana Dashboards
+# 4. Import workflows into n8n (Required on clean deployment)
+# Workflows are mounted read-only at /backup/workflows
+docker compose exec n8n n8n import:workflow --input=/backup/workflows
+
+# 5. View Grafana Dashboards
 # Open http://localhost:3000 (Login: admin / admin)
 ```
 
@@ -232,8 +237,8 @@ pytest tests/ -v --tb=short
 | **Business API** | Health Check Latency | `< 12 ms` |
 | **Customer Deduplication** | Ingestion Resolution | `< 25 ms` |
 | **Transactional Outbox** | Dispatch Latency (Local Mock) | `< 50 ms` |
-| **RAG Retrieval + Generation** | Bounded Generation (`num_predict=384`) | `2.8 - 3.4 s` |
-| **Grafana Observability** | Dashboard Metrics Monitored | **19 Panels Across 2 Dashboards** |
+| **RAG Retrieval + Generation** | Bounded Generation (`num_predict=384`, Ollama Qwen 3:4b-instruct, consumer host CPU/integrated GPU) | P50 ≈ 33.8 s, P95 ≈ 39.4 s (cold/full context); ~2.8 s (warm single-shot cache) |
+| **Grafana Observability** | Dashboard Metrics Monitored | **26 Panels Across 3 Dashboards** (21 operational panels across 2 core dashboards + 5 baseline panels) |
 
 ---
 
@@ -243,6 +248,7 @@ pytest tests/ -v --tb=short
 - **Zero-Secret Workflows**: Workflow definitions in `SMART_ENTERPRISE/automation/n8n/` contain no embedded tokens or passwords. Microservice authorization uses n8n Header Authentication (`RentkomInternalAuth`).
 - **Anonymized Synthetic Data**: All demo and fixture datasets contain purely synthetic names, addresses, and phone numbers.
 - **Prompt Injection Defense**: Pre-retrieval pattern matching catches adversarial jailbreaks and unauthorized system prompt overrides before hitting LLM compute.
+- **Container Evaluation Credentials**: In `compose.yaml`, standard default credentials (`postgres:postgres`, `admin:admin`) and open port forwardings are configured for isolated local developer evaluation and portfolio demonstration. For production deployment, bind ports to `127.0.0.1` and override credentials via `.env`.
 
 ---
 

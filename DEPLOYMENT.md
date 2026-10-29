@@ -15,8 +15,8 @@
 
 | Профіль | Сервіси, що запускаються | Призначення | Потрібні секрети |
 |---|---|---|:---:|
-| **`demo`** *(за замовчуванням)* | `postgres`, `business-api`, `grafana`, `qdrant` | Демонстрація портфоліо, аналітика, REST API | **Жодних** |
-| **`connected`** | `demo` + `n8n` | Робота зі шлюзом автоматизації, live webhooks | Telegram Bot Token, OAuth |
+| **`demo`** *(за замовчуванням)* | `postgres`, `business-api`, `grafana`, `qdrant`, `n8n` | Демонстрація портфоліо, аналітика, REST API, workflow-рушій (RAG зв'язується з хостовим Ollama або працює у черговому режимі) | **Жодних** |
+| **`connected`** | `demo` + бойові інтеграції | Робота зі шлюзом автоматизації, live webhooks | Telegram Bot Token, OAuth |
 | **`full-ai`** | `connected` + `ollama` | Повний локальний ШІ-контур безпосередньо в контейнерах | 8 GB RAM, GPU (опціонально) |
 
 ---
@@ -36,6 +36,12 @@ docker compose --profile demo up -d --build
 
 # Або через утиліту керування:
 python tools/manage.py up --profile demo
+```
+
+### Крок 2.1. Імпорт workflows у n8n (на чистому інстансі)
+Чистий контейнер n8n запускається з порожньою базою даних. Усі 8 workflows змонтовано в контейнер за шляхом `/backup/workflows`:
+```bash
+docker compose exec n8n n8n import:workflow --input=/backup/workflows
 ```
 
 ### Крок 3. Перевірка доступності сервісів
@@ -58,7 +64,7 @@ source .venv/bin/activate  # На Windows: .venv\Scripts\activate
 # 2. Встановлення залежностей
 pip install -r requirements.txt
 
-# 3. Наповнення демо-бази даних (SQLite)
+# 3. Наповнення демо-бази даних (PostgreSQL)
 python tools/seed_demo_data.py
 
 # 4. Запуск сервера бізнес-правил

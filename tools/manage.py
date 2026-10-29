@@ -36,12 +36,14 @@ def cmd_up(args):
         if profile in ["connected", "full-ai"]:
             print(" - n8n:          http://localhost:5678")
     else:
-        print("[NOTICE] Docker daemon is not active. Running in local standalone mode...")
-        # Auto-seed SQLite if demo
+        print("[NOTICE] Docker daemon is not active.")
+        print("[NOTICE] Running FastAPI Business Core in local standalone mode.")
+        print("[NOTICE] External services (PostgreSQL, Qdrant, Ollama, Grafana) must be running independently if used.")
         if profile == "demo":
-            run_cmd([sys.executable, "tools/seed_demo_data.py"])
-        print("\n[OK] Starting FastAPI Business Core locally...")
-        run_cmd([sys.executable, "-m", "uvicorn", "core.main:app", "--host", "0.0.0.0", "--port", "8000"])
+            print("[*] Checking PostgreSQL connectivity and seeding demo data...")
+            run_cmd([sys.executable, "tools/seed_demo_data.py"], check=False)
+        print("\n[*] Starting FastAPI Business Core on http://127.0.0.1:8000...")
+        run_cmd([sys.executable, "-m", "uvicorn", "core.main:app", "--host", "127.0.0.1", "--port", "8000"])
 
 def cmd_down(args):
     print("=== Stopping Rentkom Smart Enterprise ===")

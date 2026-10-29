@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     RAG_NUM_PREDICT: int = int(os.getenv("RAG_NUM_PREDICT", "384"))
     QDRANT_HOST: str = os.getenv("QDRANT_HOST", "127.0.0.1")
     QDRANT_PORT: int = int(os.getenv("QDRANT_PORT", "6333"))
-    QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "rag_real_estate_active")
+    QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "rag_real_estate")
 
     # Telegram Bot & Webhook Security
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN", None)

@@ -1,9 +1,16 @@
 # ==============================================================================
 # RENTKOM SMART ENTERPRISE: UNIFIED DOCKER COMPOSE CONFIGURATION
+#
 # Profiles:
-#   - demo: Core PostgreSQL + FastAPI Business Core + Grafana + Qdrant (Zero credentials needed)
-#   - connected: Adds n8n workflow engine for live webhooks & external services
-#   - full-ai: Adds containerized Ollama daemon alongside Qdrant
+#   - demo: Core PostgreSQL + FastAPI Business Core + Qdrant + Grafana + n8n
+#           (Zero external API keys needed; Ollama runs on host or falls back)
+#   - connected: Activates live webhook routing and production integrations
+#   - full-ai: Adds containerized Ollama daemon with local model weights
+#
+# SECURITY NOTICE:
+#   Default credentials (postgres:postgres, admin:admin) and port forwardings
+#   are configured strictly for local developer evaluation and portfolio demos.
+#   For production deployment, bind ports to 127.0.0.1 and override credentials.
 # ==============================================================================
 
 name: rentkom-smart-enterprise
@@ -155,7 +162,7 @@ services:
   # 5. n8n Automation Engine (Connected Mode)
   # ----------------------------------------------------------------------------
   n8n:
-    image: n8nio/n8n:1.64.3
+    image: n8nio/n8n:2.35.7
     container_name: rentkom-n8n
     restart: unless-stopped
     depends_on:
@@ -181,6 +188,7 @@ services:
       - "5678:5678"
     volumes:
       - n8n_data:/home/node/.n8n
+      - ./SMART_ENTERPRISE/automation/n8n:/backup/workflows:ro
     networks:
       - rentkom-net
     profiles: ["demo", "connected", "full-ai"]
