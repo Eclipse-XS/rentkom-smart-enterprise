@@ -1,6 +1,6 @@
 # Rentkom Smart Enterprise: Automated Real Estate Operations & RAG Platform
 
-[![CI Pipeline](https://github.com/Eclipsexc/rentkom-smart-enterprise/actions/workflows/ci.yml/badge.svg)](https://github.com/Eclipsexc/rentkom-smart-enterprise/actions)
+[![CI Pipeline](https://github.com/Eclipse-XS/rentkom-smart-enterprise/actions/workflows/ci.yml/badge.svg)](https://github.com/Eclipse-XS/rentkom-smart-enterprise/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)](https://fastapi.tiangolo.com)

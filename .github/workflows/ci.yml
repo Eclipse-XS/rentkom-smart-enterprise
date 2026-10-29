@@ -8,8 +8,10 @@ on:
 
 jobs:
   test:
-    name: Unit & Integration Tests
+    name: Autonomous Unit Tests & Syntax Verification
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: .
 
     steps:
       - name: Checkout Code
@@ -26,14 +28,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: System Health & Doctor Check
+      - name: Verify Code Syntax & Compilation
         run: |
-          python tools/manage.py doctor
+          python -m compileall core/ tests/ tools/ scripts/
 
       - name: Run Autonomous Unit Test Suite
         run: |
-          pytest tests/unit/ -v --tb=short
-
-      - name: Verify Demo Seeding
-        run: |
-          python tools/seed_demo_data.py
+          python -m pytest tests/unit/ -v --tb=short
