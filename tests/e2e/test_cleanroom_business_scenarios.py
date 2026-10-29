@@ -71,10 +71,15 @@ def test_scenario_a_api_postgres_outbox_mock_provider_grafana():
 
     # 4. Process outbox (or verify background worker processed)
     with SessionLocal() as db:
-        process_outbox(db, batch_size=10)
-        outbox_items = db.query(NotificationOutbox).filter(
-            NotificationOutbox.payload_json["request_id"].as_integer() == req_id
-        ).all()
+        for _ in range(15):
+            db.expire_all()
+            process_outbox(db, batch_size=10)
+            outbox_items = db.query(NotificationOutbox).filter(
+                NotificationOutbox.payload_json["request_id"].as_integer() == req_id
+            ).all()
+            if len(outbox_items) == 2 and all(it.status in ("MOCK_DELIVERED", "PROVIDER_ACCEPTED", "SENT") for it in outbox_items):
+                break
+            time.sleep(0.2)
         for it in outbox_items:
             assert it.status in ("MOCK_DELIVERED", "PROVIDER_ACCEPTED", "SENT")
             assert it.sent_at is not None
