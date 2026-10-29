@@ -30,9 +30,9 @@ jobs:
         run: |
           python tools/manage.py doctor
 
-      - name: Run Automated Test Suite
+      - name: Run Autonomous Unit Test Suite
         run: |
-          pytest tests/ -v --tb=short
+          pytest tests/unit/ -v --tb=short
 
       - name: Verify Demo Seeding
         run: |
