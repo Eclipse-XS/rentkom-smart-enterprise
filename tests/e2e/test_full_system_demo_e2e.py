@@ -139,13 +139,36 @@ def test_scenario_2_unified_router_qdrant_ollama_real_rag(real_pg_session):
     assert buy_data["route"] == "Купівля/Продаж"
     assert "Процес купівлі/продажу" in buy_data["response_text"]
 
-    # 3. Legal/RAG query via real Qdrant and real Ollama
+    # 3. Healthy RAG query via real Qdrant and real Ollama
     rag_resp = client.post("/api/v1/rag/ask", json={
         "question": "Скільки етапів перевірки документів визначено у регламенті агентства?"
     })
     assert rag_resp.status_code == 200
     rag_data = rag_resp.json()
-    assert "6" in rag_data["answer"] or "етап" in rag_data["answer"] or "240-00-00" in rag_data["answer"]
+    assert rag_data["mode"] == "grounded", f"Expected mode 'grounded' for healthy RAG query, got '{rag_data.get('mode')}'"
+    assert "6" in rag_data["answer"] or "етап" in rag_data["answer"] or "шість" in rag_data["answer"].lower()
     assert len(rag_data["sources"]) > 0
     assert any("Керівництво_з_перевірки_документів" in s for s in rag_data["sources"])
     assert rag_data["confidence_score"] > 0.6
+    # Fallback message must NOT be accepted in healthy RAG test
+    assert "240-00-00" not in rag_data["answer"]
+    assert "черговому режимі" not in rag_data["answer"]
+
+
+def test_rag_controlled_offline_fallback(monkeypatch):
+    """
+    Controlled fallback test: when Ollama/Qdrant is unreachable or times out,
+    the system must degrade gracefully to the duty fallback mode.
+    """
+    from core.config import settings
+    monkeypatch.setattr(settings, "OLLAMA_BASE_URL", "http://127.0.0.1:59999")
+    client = TestClient(app)
+
+    rag_resp = client.post("/api/v1/rag/ask", json={
+        "question": "Скільки етапів перевірки документів визначено у регламенті агентства?"
+    })
+    assert rag_resp.status_code == 200
+    rag_data = rag_resp.json()
+    assert rag_data["mode"] == "fallback", f"Expected mode 'fallback' during outage, got '{rag_data.get('mode')}'"
+    assert "+38 (032) 240-00-00" in rag_data["answer"]
+    assert "черговому режимі" in rag_data["answer"]

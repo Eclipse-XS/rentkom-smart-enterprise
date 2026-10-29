@@ -69,19 +69,29 @@ def test_scenario_a_api_postgres_outbox_mock_provider_grafana():
         ).all()
         assert len(outbox_items) == 2
 
-    # 4. Process outbox (or verify background worker processed)
+    # 4. Process outbox (or verify background worker processed to terminal status)
     with SessionLocal() as db:
-        for _ in range(15):
+        max_wait_seconds = 3.0
+        start_wait = time.time()
+        outbox_items = []
+        while time.time() - start_wait < max_wait_seconds:
             db.expire_all()
             process_outbox(db, batch_size=10)
             outbox_items = db.query(NotificationOutbox).filter(
                 NotificationOutbox.payload_json["request_id"].as_integer() == req_id
             ).all()
+            for it in outbox_items:
+                if it.status in ("FAILED", "DEAD_LETTER"):
+                    pytest.fail(f"Outbox worker failed on item {it.id} with status {it.status}: {it.last_error}")
             if len(outbox_items) == 2 and all(it.status in ("MOCK_DELIVERED", "PROVIDER_ACCEPTED", "SENT") for it in outbox_items):
                 break
-            time.sleep(0.2)
+            time.sleep(0.15)
+
+        assert len(outbox_items) == 2, f"Expected 2 outbox items, found {len(outbox_items)}"
         for it in outbox_items:
-            assert it.status in ("MOCK_DELIVERED", "PROVIDER_ACCEPTED", "SENT")
+            assert it.status in ("MOCK_DELIVERED", "PROVIDER_ACCEPTED", "SENT"), (
+                f"Outbox item {it.id} did not reach terminal delivery within {max_wait_seconds}s. Current status: {it.status}"
+            )
             assert it.sent_at is not None
 
     # 5. Verify analytics summary endpoint
