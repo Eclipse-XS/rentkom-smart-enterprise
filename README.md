@@ -1,6 +1,6 @@
 # Rentkom Smart Enterprise: Automated Real Estate Operations & RAG Platform
 
-[![CI Pipeline](https://github.com/rentkom/rentkom-smart-enterprise/actions/workflows/ci.yml/badge.svg)](https://github.com/rentkom/rentkom-smart-enterprise/actions)
+[![CI Pipeline](https://github.com/Eclipsexc/rentkom-smart-enterprise/actions/workflows/ci.yml/badge.svg)](https://github.com/Eclipsexc/rentkom-smart-enterprise/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)](https://fastapi.tiangolo.com)
@@ -9,6 +9,8 @@
 [![Qdrant](https://img.shields.io/badge/Qdrant-v1.12-red.svg)](https://qdrant.tech/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-black.svg)](https://ollama.com/)
 [![Grafana](https://img.shields.io/badge/Grafana-11.3%2B-F46800.svg)](https://grafana.com/)
+[![Docker Clean--Room](https://img.shields.io/badge/Docker%20Clean--Room-NOT%20VERIFIED-orange.svg)](#-9-known-limitations--operational-boundaries)
+[![Connected Mode](https://img.shields.io/badge/Connected%20Mode-Credentials%20Required-yellow.svg)](#-9-known-limitations--operational-boundaries)
 
 A modern, production-grade enterprise automation platform and AI knowledge system for real estate operations. Designed with an asynchronous **FastAPI Business Core**, **PostgreSQL transactional outbox & deduplication engine**, **n8n event-driven workflow orchestrator**, **hybrid RAG retrieval pipeline** (Qdrant + Ollama), and a dual **Grafana observability stack**.
 
@@ -244,10 +246,14 @@ pytest tests/ -v --tb=short
 
 ---
 
-## 📋 9. Known Limitations & Roadmap
+## 📋 9. Known Limitations & Operational Boundaries
 
-- **Docker Clean-Room**: Local Docker pipe unavailable in specific developer host configurations; standalone mode provides full equivalent native validation.
-- **Live SMTP / Telegram**: Connected mode requires user-supplied Telegram Bot Token and SMTP server credentials in `.env`.
+> [!WARNING]
+> **Operational Verification Status**:
+> - **Docker Clean-Room**: **`NOT VERIFIED`** on local development host (Windows Docker Engine named pipe inactive). The `compose.yaml` and multi-stage `Dockerfile` are syntactically validated and tested against Compose v2 schema, but isolated clean-room container runs remain to be verified once Docker Desktop daemon is started.
+> - **Connected Mode**: **`Credentials Required`**. Live Telegram bot responses, external Google Forms / Sheets synchronization, and real SMTP email delivery require user-supplied credentials in `.env` (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `SMTP_HOST`, `SMTP_PASSWORD`).
+> - **Demo Mode**: **`AUTONOMOUS & VERIFIED`**. All business scenarios, customer deduplication, transactional outbox processing, RAG legal assistance, and dual Grafana dashboards operate 100% autonomously without external API keys or cloud dependencies.
+
 - **Roadmap**:
   - OpenTelemetry distributed tracing across n8n and FastAPI.
   - Multi-tenant real estate agency support.
