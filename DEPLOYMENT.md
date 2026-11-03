@@ -4,20 +4,27 @@
 
 - **Операційна система:** Linux, macOS, або Windows 10/11 (WSL2).
 - **Платформа контейнеризації:** Docker Engine 24.0+ та Docker Compose v2.20+.
-- **Локальне виконання (без Docker):** Python 3.11–3.13, PostgreSQL 15+ (опціонально), Ollama 0.3+.
-- **Мінімальні ресурси:** 4 GB RAM, 2 CPU Cores, 5 GB вільного місця на диску.
+- **Локальне виконання (без Docker):** Python 3.11–3.13, PostgreSQL 16+ (або SQLite у демо-режимі), Qdrant v1.12+, Ollama 0.3+.
+- **Мінімальні ресурси:** 4 GB RAM (8 GB для `full-ai`), 2 CPU Cores, 5 GB вільного місця на диску.
 
 ---
 
-## 2. Профілі запуску Docker Compose
+## 2. Режими та профілі запуску (`demo` vs `connected` vs `production`)
 
-Система підтримує три модульні профілі виконання:
+Система підтримує чотири модульні профілі Docker Compose та три режими середовища (`ENVIRONMENT`):
 
-| Профіль | Сервіси, що запускаються | Призначення | Потрібні секрети |
+| Профіль Docker Compose | Сервіси, що запускаються | Призначення | Потрібні секрети |
 |---|---|---|:---:|
-| **`demo`** *(за замовчуванням)* | `postgres`, `business-api`, `grafana`, `qdrant`, `n8n` | Демонстрація портфоліо, аналітика, REST API, workflow-рушій (RAG зв'язується з хостовим Ollama або працює у черговому режимі) | **Жодних** |
-| **`connected`** | `demo` + бойові інтеграції | Робота зі шлюзом автоматизації, live webhooks | Telegram Bot Token, OAuth |
-| **`full-ai`** | `connected` + `ollama` | Повний локальний ШІ-контур безпосередньо в контейнерах | 8 GB RAM, GPU (опціонально) |
+| **`demo`** *(за замовчуванням)* | `postgres`, `business-api`, `grafana`, `qdrant` | Локальна демонстрація портфоліо, аналітика, REST API, mock-сповіщення | **Жодних** |
+| **`connected`** | `demo` + `n8n` | Інтеграція зі шлюзом автоматизації n8n, live Telegram webhooks та SMTP | `INTERNAL_API_KEY`, `ADMIN_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_SECRET_TOKEN`, SMTP |
+| **`full-ai`** | `connected` + `ollama` | Повний локальний контур RAG з контейнеризованим Ollama | 8 GB RAM, GPU (опціонально) |
+| **`dedicated-worker`** | `outbox-worker` | Окремий фоновий процес обробки Transactional Outbox (коли `RUN_OUTBOX_WORKER_IN_LIFESPAN=false`) | Як у поточного режиму |
+
+### Режими безпеки (`ENVIRONMENT`)
+- **`demo` / `development` / `test`**: Дозволяє використання `/api/v1/telegram/webhook-mock`, `/api/v1/telegram/mock-dispatcher` та імітованого транспорту сповіщень (`NOTIFICATION_PROVIDER=mock`).
+- **`connected` / `production`**:
+  - Примусово вимикає демонстраційні та mock-ендпоінти (`HTTP 403`).
+  - Під час старту (`settings.validate_runtime_security()`) перевіряє наявність надійних ключів `ADMIN_API_KEY` та `INTERNAL_API_KEY` (мінімум 24 символи, заборона демо-значень), забороняє `ALLOW_TEST_WEBHOOK=true` та `NOTIFICATION_PROVIDER=mock` у `production`.
 
 ---
 
@@ -27,34 +34,30 @@
 ```bash
 cp .env.example .env
 ```
-*(Для демонстраційного режиму редагувати `.env` не потрібно).*
+*(Для профілю `demo` редагувати `.env` не обов'язково; для `connected` або `production` обов'язково заповніть секретні ключі).*
 
 ### Крок 2. Запуск контейнерів
 ```bash
-# Демонстраційний профіль (найшвидший запуск):
+# Демонстраційний профіль:
 docker compose --profile demo up -d --build
 
 # Або через утиліту керування:
 python tools/manage.py up --profile demo
 ```
 
-### Крок 2.1. Імпорт workflows у n8n (на чистому інстансі)
-Чистий контейнер n8n запускається з порожньою базою даних. Усі 8 workflows змонтовано в контейнер за шляхом `/backup/workflows`:
-```bash
-docker compose exec n8n n8n import:workflow --input=/backup/workflows
-```
-
-### Крок 3. Перевірка доступності сервісів
-- **FastAPI Interactive Docs (Swagger):** [http://localhost:8000/docs](http://localhost:8000/docs)
-- **Grafana Dashboards:** [http://localhost:3000](http://localhost:3000) (Логін: `admin`, Пароль: `admin`)
-- **Qdrant Vector Web UI:** [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
-- **Health Diagnostics Endpoint:** [http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health)
+### Крок 3. Перевірка доступності сервісів (Liveness & Readiness)
+- **FastAPI Interactive Docs (Swagger):** `http://localhost:8000/docs`
+- **Liveness Probe:** `http://localhost:8000/api/v1/health/live`
+- **Readiness Probe (перевірка БД):** `http://localhost:8000/api/v1/health/ready`
+- **Full Diagnostics Endpoint:** `http://localhost:8000/api/v1/health`
+- **Grafana Dashboards:** `http://localhost:3000` (Логін та пароль задаються через `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` у `.env`)
+- **Qdrant Vector Web UI:** `http://localhost:6333/dashboard`
 
 ---
 
 ## 4. Локальне розгортання без Docker (Standalone Python)
 
-Якщо Docker Desktop вимкнено або обмежено ресурсами, система працює автономно:
+Якщо Docker Desktop вимкнено або недоступний, система підтримує повний цикл локальної перевірки:
 
 ```bash
 # 1. Створення віртуального оточення
@@ -64,40 +67,55 @@ source .venv/bin/activate  # На Windows: .venv\Scripts\activate
 # 2. Встановлення залежностей
 pip install -r requirements.txt
 
-# 3. Наповнення демо-бази даних (PostgreSQL)
+# 3. Наповнення демо-бази даних
 python tools/seed_demo_data.py
 
-# 4. Запуск сервера бізнес-правил
+# 4. Переіндексація бази знань RAG у Qdrant (за наявності Qdrant + Ollama)
+python tools/reindex_knowledge_base.py
+
+# 5. Запуск сервера бізнес-правил
 python tools/manage.py up
 ```
 
 ---
 
-## 5. Зупинка сервісів
+## 5. Резервне копіювання та відновлення PostgreSQL (`pg_dump` / `psql`)
+
+На відміну від файлового копіювання SQLite, для PostgreSQL використовується утиліта логічного резервного копіювання `tools/backup_restore.py` (інтегрована в `tools/manage.py`):
+
 ```bash
-docker compose --profile demo --profile connected --profile full-ai down
-# Або:
-python tools/manage.py down
+# Створення резервної копії PostgreSQL або SQLite:
+python tools/manage.py backup --db-url "postgresql://postgres:password@127.0.0.1:5432/rentkom" --output-dir backups
+
+# Перевірка відновлення у тестову ізольовану базу даних (обов'язково має містити test/disposable/temp у назві):
+python tools/manage.py restore --backup-file backups/rentkom_pg_backup_YYYYMMDD_HHMMSS.sql --target-db-url "postgresql://postgres:password@127.0.0.1:5432/rentkom_test"
 ```
+> **Захист даних:** Команда `restore` використовує `tests/safety.py` (`assert_safe_test_database`) і категорично відмовляється перезаписувати робочі або системні бази даних (`postgres`, `rentkom`, `lab4_real_estate`).
 
 ---
 
 ## 6. Налаштування облікових записів n8n (Credentials Bootstrap)
 
-Для роботи підсистеми автоматизації (n8n workflows) у режимах `connected` або `demo`:
+Для роботи підсистеми автоматизації (`SMART_ENTERPRISE/automation/n8n/*.json`) у режимах `connected` або `demo`:
 
 ### Варіант А. Автоматичний CLI імпорт (Рекомендовано)
-Запустіть підтримуваний скрипт імпорту:
 ```bash
 python scripts/bootstrap_n8n_credentials.py
 ```
-Скрипт зчитує `INTERNAL_API_KEY` із середовища/конфігурації та виконує офіційну команду `n8n import:credentials`, миттєво видаляючи тимчасовий дескриптор.
+Скрипт зчитує `INTERNAL_API_KEY` із середовища та виконує `n8n import:credentials`, миттєво видаляючи тимчасовий дескриптор.
 
-### Варіант Б. Ручне додавання через веб-інтерфейс n8n (2 кліки)
-1. Відкрийте n8n: [http://localhost:5678](http://localhost:5678)
-2. Перейдіть до **Credentials** $\to$ **Add Credential** $\to$ оберіть **Header Auth**.
-3. Заповніть параметри:
-   - **Credential Name:** `Rentkom Internal Auth` (ID: `RentkomInternalAuth`)
-   - **Name:** `X-Internal-Token`
-   - **Value:** значення `INTERNAL_API_KEY` з вашого файлу `.env`
-4. Натисніть **Save**.
+### Варіант Б. Налаштування змінних середовища n8n
+Усі 8 експортованих воркфлоу n8n використовують змінні середовища замість жорстко закодованих адрес або секретів:
+- `BUSINESS_API_URL` (за замовчуванням у Docker: `http://business-api:8000`)
+- `INTERNAL_API_KEY` (токен міжсервісної авторизації `X-Internal-Token`)
+- `TEST_WEBHOOK_SECRET` (токен тестового контуру `X-Test-Token`)
+- `TELEGRAM_ADMIN_CHAT_ID` (ID адміністративного чату в Telegram для сповіщень)
+
+---
+
+## 7. Зупинка сервісів
+```bash
+docker compose --profile demo --profile connected --profile full-ai --profile dedicated-worker down
+# Або:
+python tools/manage.py down
+```

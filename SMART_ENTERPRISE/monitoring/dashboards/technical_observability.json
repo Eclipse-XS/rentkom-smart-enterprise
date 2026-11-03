@@ -428,6 +428,10 @@
           }
         },
         "overrides": []
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
       }
     },
     {
@@ -464,6 +468,10 @@
           }
         },
         "overrides": []
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "lab5-postgres"
       }
     }
   ],
