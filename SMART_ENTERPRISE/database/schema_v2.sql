@@ -94,7 +94,16 @@ CREATE TABLE IF NOT EXISTS public.notification_outbox (
     subject TEXT NOT NULL,
     payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     status TEXT NOT NULL DEFAULT 'PENDING' CHECK (
-        status IN ('PENDING', 'PROCESSING', 'SENT', 'FAILED')
+        status IN (
+            'PENDING',
+            'PROCESSING',
+            'RETRY_PENDING',
+            'SENT',
+            'MOCK_DELIVERED',
+            'PROVIDER_ACCEPTED',
+            'FAILED',
+            'FAILED_PERMANENT'
+        )
     ),
     retry_count INT NOT NULL DEFAULT 0,
     max_retries INT NOT NULL DEFAULT 5,
@@ -106,7 +115,7 @@ CREATE TABLE IF NOT EXISTS public.notification_outbox (
 
 CREATE INDEX IF NOT EXISTS idx_notification_outbox_pending
     ON public.notification_outbox (status, next_retry_at)
-    WHERE status IN ('PENDING', 'FAILED');
+    WHERE status IN ('PENDING', 'RETRY_PENDING', 'FAILED');
 
 -- 6. Notification Delivery Attempts Audit
 CREATE TABLE IF NOT EXISTS public.notification_attempts (
@@ -133,7 +142,26 @@ CREATE TABLE IF NOT EXISTS public.audit_events (
 
 CREATE INDEX IF NOT EXISTS idx_audit_events_created ON public.audit_events (created_at DESC);
 
--- 8. Data Migration & Compatibility Bridge
+-- 8. Telegram Inbox (Idempotency, Concurrent Lease, Deduplication)
+CREATE TABLE IF NOT EXISTS public.telegram_inbox (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    bot_id VARCHAR(100) NOT NULL DEFAULT 'rentkom_bot',
+    update_id BIGINT NOT NULL,
+    chat_id BIGINT,
+    message_text TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'PROCESSING',
+    response_payload JSONB,
+    locked_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMPTZ,
+    retry_count INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_telegram_inbox_bot_update UNIQUE (bot_id, update_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_inbox_bot_update ON public.telegram_inbox (bot_id, update_id);
+CREATE INDEX IF NOT EXISTS idx_telegram_inbox_status_locked ON public.telegram_inbox (status, locked_at);
+
+-- 9. Data Migration & Compatibility Bridge
 -- If legacy physical table real_estate_requests exists, migrate rows into customers and service_requests,
 -- then rename the legacy table so the backward-compatibility VIEW can be created without relation collision.
 DO $$
@@ -144,23 +172,25 @@ BEGIN
           AND table_name = 'real_estate_requests'
           AND table_type = 'BASE TABLE'
     ) THEN
-        -- Insert distinct customers from legacy table
-        INSERT INTO public.customers (full_name, phone, created_at)
-        SELECT DISTINCT full_name, phone, MIN(created_at)
+        -- Insert distinct customers from legacy table (deduplicated strictly by phone)
+        INSERT INTO public.customers (full_name, phone, created_at, updated_at)
+        SELECT DISTINCT ON (phone) full_name, phone, created_at, created_at
         FROM public.real_estate_requests
+        ORDER BY phone, created_at ASC
         ON CONFLICT (phone) DO UPDATE
-        SET full_name = EXCLUDED.full_name;
+        SET full_name = EXCLUDED.full_name,
+            updated_at = EXCLUDED.updated_at;
 
         -- Insert service requests linked to customer
         INSERT INTO public.service_requests (
             customer_id, request_purpose, property_type, property_location,
             consultation_date, additional_comments, status, source_channel,
-            source_row_id, created_at
+            source_row_id, created_at, updated_at
         )
         SELECT
             c.id, r.request_purpose, r.property_type, r.property_location,
             r.consultation_date, r.additional_comments, 'COMPLETED', 'GOOGLE_FORMS',
-            r.source_row_id, r.created_at
+            r.source_row_id, r.created_at, r.created_at
         FROM public.real_estate_requests r
         JOIN public.customers c ON c.phone = r.phone
         ON CONFLICT (source_row_id) DO NOTHING;
@@ -177,7 +207,7 @@ BEGIN
     END IF;
 END $$;
 
--- 9. Backward Compatibility View for LR4 / Legacy Grafana panels
+-- 9.1 Backward Compatibility View for LR4 / Legacy Grafana panels
 CREATE OR REPLACE VIEW public.real_estate_requests AS
 SELECT
     r.id,
@@ -192,3 +222,139 @@ SELECT
     COALESCE(r.source_row_id, 'api:manual:' || r.id::text) AS source_row_id
 FROM public.service_requests r
 JOIN public.customers c ON c.id = r.customer_id;
+
+-- 9.2 INSTEAD OF INSERT Trigger for Complete Legacy Compatibility
+CREATE OR REPLACE FUNCTION public.trg_real_estate_requests_insert()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_customer_id BIGINT;
+BEGIN
+    INSERT INTO public.customers (full_name, phone, created_at, updated_at)
+    VALUES (NEW.full_name, NEW.phone, COALESCE(NEW.created_at, CURRENT_TIMESTAMP), COALESCE(NEW.created_at, CURRENT_TIMESTAMP))
+    ON CONFLICT (phone) DO UPDATE
+        SET full_name = EXCLUDED.full_name, updated_at = CURRENT_TIMESTAMP
+    RETURNING id INTO v_customer_id;
+
+    INSERT INTO public.service_requests (
+        customer_id, request_purpose, property_type, property_location,
+        consultation_date, additional_comments, status, source_channel,
+        source_row_id, created_at, updated_at
+    )
+    VALUES (
+        v_customer_id, NEW.request_purpose, NEW.property_type, NEW.property_location,
+        NEW.consultation_date, NEW.additional_comments, 'NEW', 'GOOGLE_FORMS',
+        NEW.source_row_id, COALESCE(NEW.created_at, CURRENT_TIMESTAMP), COALESCE(NEW.created_at, CURRENT_TIMESTAMP)
+    )
+    ON CONFLICT (source_row_id) DO NOTHING
+    RETURNING id INTO NEW.id;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_instead_of_insert_real_estate_requests ON public.real_estate_requests;
+CREATE TRIGGER trg_instead_of_insert_real_estate_requests
+INSTEAD OF INSERT ON public.real_estate_requests
+FOR EACH ROW EXECUTE FUNCTION public.trg_real_estate_requests_insert();
+
+-- 9.3 Supported Stored Function for Legacy LR4 Ingress
+DROP FUNCTION IF EXISTS public.insert_real_estate_request_legacy;
+CREATE OR REPLACE FUNCTION public.insert_real_estate_request_legacy(
+    p_full_name TEXT,
+    p_phone TEXT,
+    p_request_purpose TEXT,
+    p_property_type TEXT,
+    p_property_location TEXT,
+    p_consultation_date DATE,
+    p_additional_comments TEXT,
+    p_source_row_id TEXT
+)
+RETURNS TABLE (
+    id BIGINT,
+    res_full_name TEXT,
+    res_phone TEXT,
+    res_purpose TEXT,
+    res_type TEXT,
+    res_location TEXT,
+    res_date DATE,
+    res_comments TEXT,
+    res_created_at TIMESTAMPTZ,
+    res_source_row_id TEXT
+) AS $$
+DECLARE
+    v_customer_id BIGINT;
+    v_request_id BIGINT;
+    v_created_at TIMESTAMPTZ;
+BEGIN
+    SELECT r.id, r.created_at INTO v_request_id, v_created_at
+    FROM public.service_requests r
+    WHERE r.source_row_id = p_source_row_id;
+
+    IF FOUND THEN
+        RETURN;
+    END IF;
+
+    INSERT INTO public.customers (full_name, phone, created_at, updated_at)
+    VALUES (p_full_name, p_phone, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT (phone) DO UPDATE
+        SET full_name = EXCLUDED.full_name, updated_at = CURRENT_TIMESTAMP
+    RETURNING customers.id INTO v_customer_id;
+
+    BEGIN
+        INSERT INTO public.service_requests (
+            customer_id, request_purpose, property_type, property_location,
+            consultation_date, additional_comments, status, source_channel,
+            source_row_id, created_at, updated_at
+        )
+        VALUES (
+            v_customer_id, p_request_purpose, p_property_type, p_property_location,
+            p_consultation_date, p_additional_comments, 'NEW', 'GOOGLE_FORMS',
+            p_source_row_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (source_row_id) DO NOTHING
+        RETURNING service_requests.id, service_requests.created_at INTO v_request_id, v_created_at;
+    EXCEPTION WHEN unique_violation THEN
+        RETURN;
+    END;
+
+    IF v_request_id IS NULL THEN
+        RETURN;
+    END IF;
+
+    INSERT INTO public.notification_outbox (
+        channel, recipient, subject, payload_json, status, retry_count, max_retries, next_retry_at, created_at
+    )
+    VALUES (
+        'EMAIL',
+        COALESCE((SELECT email FROM public.customers WHERE customers.id = v_customer_id), 'admin@rentkom.lviv.ua'),
+        'Нова заявка на консультацію - ' || p_full_name,
+        jsonb_build_object(
+            'request_id', v_request_id,
+            'source_row_id', p_source_row_id,
+            'full_name', p_full_name,
+            'phone', p_phone,
+            'purpose', p_request_purpose,
+            'property_type', p_property_type,
+            'location', p_property_location,
+            'consultation_date', p_consultation_date
+        ),
+        'PENDING',
+        0,
+        5,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+    );
+
+    RETURN QUERY SELECT
+        v_request_id AS id,
+        p_full_name AS res_full_name,
+        p_phone AS res_phone,
+        p_request_purpose AS res_purpose,
+        p_property_type AS res_type,
+        p_property_location AS res_location,
+        p_consultation_date AS res_date,
+        p_additional_comments AS res_comments,
+        v_created_at AS res_created_at,
+        p_source_row_id AS res_source_row_id;
+END;
+$$ LANGUAGE plpgsql;

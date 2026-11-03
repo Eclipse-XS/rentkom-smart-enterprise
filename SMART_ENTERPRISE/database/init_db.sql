@@ -97,7 +97,16 @@ CREATE TABLE IF NOT EXISTS public.notification_outbox (
     subject TEXT NOT NULL,
     payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     status TEXT NOT NULL DEFAULT 'PENDING' CHECK (
-        status IN ('PENDING', 'PROCESSING', 'SENT', 'MOCK_DELIVERED', 'PROVIDER_ACCEPTED', 'FAILED')
+        status IN (
+            'PENDING',
+            'PROCESSING',
+            'RETRY_PENDING',
+            'SENT',
+            'MOCK_DELIVERED',
+            'PROVIDER_ACCEPTED',
+            'FAILED',
+            'FAILED_PERMANENT'
+        )
     ),
     retry_count INT NOT NULL DEFAULT 0,
     max_retries INT NOT NULL DEFAULT 5,
@@ -109,7 +118,7 @@ CREATE TABLE IF NOT EXISTS public.notification_outbox (
 
 CREATE INDEX IF NOT EXISTS idx_notification_outbox_pending
     ON public.notification_outbox (status, next_retry_at)
-    WHERE status IN ('PENDING', 'FAILED');
+    WHERE status IN ('PENDING', 'RETRY_PENDING', 'FAILED');
 
 -- 6. Notification Delivery Attempts Audit
 CREATE TABLE IF NOT EXISTS public.notification_attempts (
@@ -164,7 +173,38 @@ BEGIN
           AND table_name = 'real_estate_requests'
           AND table_type = 'BASE TABLE'
     ) THEN
-        ALTER TABLE public.real_estate_requests RENAME TO real_estate_requests_legacy_lr4;
+        -- 1. Insert distinct customers from legacy table (deduplicated strictly by phone)
+        INSERT INTO public.customers (full_name, phone, created_at, updated_at)
+        SELECT DISTINCT ON (phone) full_name, phone, created_at, created_at
+        FROM public.real_estate_requests
+        ORDER BY phone, created_at ASC
+        ON CONFLICT (phone) DO UPDATE
+        SET full_name = EXCLUDED.full_name,
+            updated_at = EXCLUDED.updated_at;
+
+        -- 2. Insert service requests linked to resolved customer_id
+        INSERT INTO public.service_requests (
+            customer_id, request_purpose, property_type, property_location,
+            consultation_date, additional_comments, status, source_channel,
+            source_row_id, created_at, updated_at
+        )
+        SELECT
+            c.id, r.request_purpose, r.property_type, r.property_location,
+            r.consultation_date, r.additional_comments, 'COMPLETED', 'GOOGLE_FORMS',
+            r.source_row_id, r.created_at, r.created_at
+        FROM public.real_estate_requests r
+        JOIN public.customers c ON c.phone = r.phone
+        ON CONFLICT (source_row_id) DO NOTHING;
+
+        -- 3. Safely archive legacy table so the view name can be bound
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'real_estate_requests_legacy_lr4'
+        ) THEN
+            ALTER TABLE public.real_estate_requests RENAME TO real_estate_requests_legacy_lr4;
+        ELSE
+            EXECUTE 'ALTER TABLE public.real_estate_requests RENAME TO real_estate_requests_legacy_lr4_' || to_char(CURRENT_TIMESTAMP, 'YYYYMMDD_HH24MISS');
+        END IF;
     END IF;
 END $$;
 
@@ -183,7 +223,7 @@ SELECT
 FROM public.service_requests r
 JOIN public.customers c ON c.id = r.customer_id;
 
--- 8.1 INSTEAD OF INSERT Trigger for Complete Legacy Compatibility
+-- 9.1 INSTEAD OF INSERT Trigger for Complete Legacy Compatibility
 CREATE OR REPLACE FUNCTION public.trg_real_estate_requests_insert()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -217,7 +257,7 @@ CREATE TRIGGER trg_instead_of_insert_real_estate_requests
 INSTEAD OF INSERT ON public.real_estate_requests
 FOR EACH ROW EXECUTE FUNCTION public.trg_real_estate_requests_insert();
 
--- 8.2 Supported Stored Function for Legacy LR4 Ingress (Idempotent ON CONFLICT replacement)
+-- 9.2 Supported Stored Function for Legacy LR4 Ingress (Idempotent ON CONFLICT replacement)
 DROP FUNCTION IF EXISTS public.insert_real_estate_request_legacy;
 CREATE OR REPLACE FUNCTION public.insert_real_estate_request_legacy(
     p_full_name TEXT,
@@ -286,7 +326,7 @@ BEGIN
     )
     VALUES (
         'EMAIL',
-        COALESCE((SELECT email FROM public.customers WHERE customers.id = v_customer_id), 'kanaleclipse@gmail.com'),
+        COALESCE((SELECT email FROM public.customers WHERE customers.id = v_customer_id), 'admin@rentkom.lviv.ua'),
         'Нова заявка на консультацію - ' || p_full_name,
         jsonb_build_object(
             'request_id', v_request_id,
@@ -319,7 +359,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 9. Seed Baseline Historical Records (LR4 verified data)
+-- 10. Seed Baseline Historical Records (LR4 verified data)
 INSERT INTO public.customers (full_name, phone, created_at, updated_at) VALUES
 ('Олексій Мельник', '+380671112233', '2026-10-18 10:15:00+03', '2026-10-18 10:15:00+03'),
 ('Ірина Ковальчук', '+380502223344', '2026-10-19 11:20:00+03', '2026-10-19 11:20:00+03'),

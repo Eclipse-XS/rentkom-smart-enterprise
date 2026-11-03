@@ -1,3 +1,4 @@
+import os
 import pytest
 import time
 from datetime import datetime, timezone, timedelta
@@ -9,13 +10,28 @@ from core.database import Base
 from core.models import ServiceRequest, NotificationOutbox, NotificationAttempt
 from core.services.outbox_service import process_outbox
 from core.config import settings
+from tests.safety import assert_safe_test_database, ensure_test_schema_marker
+from tests.integration.test_legacy_lr4_postgres_v2 import SQL_LEGACY_FUNCTION
 
-POSTGRES_URL = "postgresql+psycopg2://postgres@127.0.0.1:5433/postgres"
 
 @pytest.fixture(scope="module")
 def pg_session():
-    engine = create_engine(POSTGRES_URL)
+    postgres_url = os.getenv("TEST_DATABASE_URL")
+    if not postgres_url:
+        pytest.skip("TEST_DATABASE_URL not set; skipping LR4 notification forensics test.")
+    assert_safe_test_database(postgres_url)
+    try:
+        engine = create_engine(postgres_url, pool_pre_ping=True)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1;"))
+        ensure_test_schema_marker(engine)
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        pytest.skip(f"PostgreSQL test database unreachable: {exc}")
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(text(SQL_LEGACY_FUNCTION))
     Session = sessionmaker(bind=engine, expire_on_commit=False)
     session = Session()
     yield session
@@ -145,11 +161,13 @@ def test_c_provider_unavailable_retry_recovery(pg_session):
     finally:
         settings.NOTIFICATION_PROVIDER = orig_provider
 
-def test_d_concurrent_calls_same_source_row_id():
+def test_d_concurrent_calls_same_source_row_id(pg_session):
     """
     Test D: Two concurrent workers invoking insert_real_estate_request_legacy with the SAME source_row_id.
     """
-    engine = create_engine(POSTGRES_URL)
+    postgres_url = os.getenv("TEST_DATABASE_URL")
+    assert_safe_test_database(postgres_url)
+    engine = create_engine(postgres_url, pool_pre_ping=True)
     unique_id = f"lr4_gate3_test_d_{int(time.time() * 1000 % 10000000)}"
 
     def worker_call():

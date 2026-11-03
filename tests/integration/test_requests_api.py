@@ -19,18 +19,22 @@ def test_create_and_get_request_api(client):
     assert data["status"] == "NEW"
     req_id = data["id"]
 
-    # 2. GET /api/v1/requests/{id}
-    get_resp = client.get(f"/api/v1/requests/{req_id}")
+    # 2. GET /api/v1/requests/{id} (Requires Admin Auth)
+    get_resp = client.get(
+        f"/api/v1/requests/{req_id}",
+        headers={"X-Admin-Token": "rentkom-demo-admin-key-2026"}
+    )
     assert get_resp.status_code == 200
     assert get_resp.json()["property_type"] == "Будинок"
 
-    # 3. PATCH /api/v1/requests/{id}/status
+    # 3. PATCH /api/v1/requests/{id}/status (Requires Admin Auth)
     patch_resp = client.patch(
         f"/api/v1/requests/{req_id}/status",
-        json={"new_status": "SCHEDULED", "comment": "Узгоджено час зустрічі", "changed_by": "manager_1"}
+        headers={"X-Admin-Token": "rentkom-demo-admin-key-2026"},
+        json={"new_status": "IN_REVIEW", "comment": "Узгоджено перевірку", "changed_by": "manager_1"}
     )
     assert patch_resp.status_code == 200
-    assert patch_resp.json()["status"] == "SCHEDULED"
+    assert patch_resp.json()["status"] == "IN_REVIEW"
 
 def test_idempotent_request_submission(client):
     payload = {
