@@ -1,9 +1,12 @@
 import os
+from typing import Optional, List
+from urllib.parse import urlparse
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="allow")
@@ -13,11 +16,12 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "demo")
 
-    # Database (Defaults to local isolated PostgreSQL 18 cluster)
+    # Database
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql+psycopg2://postgres@127.0.0.1:5433/postgres"
+        "postgresql+psycopg2://postgres:postgres@127.0.0.1:5432/lab4_real_estate"
     )
+    TEST_DATABASE_URL: Optional[str] = os.getenv("TEST_DATABASE_URL", None)
 
     # Notification & Mock Settings
     NOTIFICATION_PROVIDER: str = os.getenv("NOTIFICATION_PROVIDER", "mock")
@@ -27,21 +31,34 @@ class Settings(BaseSettings):
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
     SMTP_USER: Optional[str] = os.getenv("SMTP_USER", None)
     SMTP_PASSWORD: Optional[str] = os.getenv("SMTP_PASSWORD", None)
+    SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
+    SMTP_TIMEOUT_SECONDS: float = float(os.getenv("SMTP_TIMEOUT_SECONDS", "10.0"))
 
     # External Services
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen3:4b-instruct")
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "mxbai-embed-large:latest")
     RAG_NUM_PREDICT: int = int(os.getenv("RAG_NUM_PREDICT", "384"))
+    RAG_MIN_SIMILARITY: float = float(os.getenv("RAG_MIN_SIMILARITY", "0.55"))
     QDRANT_HOST: str = os.getenv("QDRANT_HOST", "127.0.0.1")
     QDRANT_PORT: int = int(os.getenv("QDRANT_PORT", "6333"))
-    QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "rag_real_estate")
+    QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "rag_real_estate_active")
 
-    # Telegram Bot & Webhook Security
-    TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN", None)
-    TEST_WEBHOOK_SECRET: Optional[str] = os.getenv("TEST_WEBHOOK_SECRET", None)
+    # Security & Authentication
+    ADMIN_API_KEY: Optional[str] = os.getenv("ADMIN_API_KEY", None)
     INTERNAL_API_KEY: Optional[str] = os.getenv("INTERNAL_API_KEY", None)
+    TEST_WEBHOOK_SECRET: Optional[str] = os.getenv("TEST_WEBHOOK_SECRET", None)
+    TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN", None)
+    TELEGRAM_SECRET_TOKEN: Optional[str] = os.getenv("TELEGRAM_SECRET_TOKEN", None)
     ALLOW_TEST_WEBHOOK: bool = os.getenv("ALLOW_TEST_WEBHOOK", "true").lower() in ("true", "1", "yes")
+
+    # CORS configuration
+    CORS_ORIGINS: List[str] = [
+        origin.strip() for origin in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000"
+        ).split(",") if origin.strip()
+    ]
 
     @property
     def is_safe_demo_or_dev(self) -> bool:
@@ -59,5 +76,50 @@ class Settings(BaseSettings):
         Evaluates whether test webhook ingress is permitted based on environment and explicit opt-in.
         """
         return self.is_safe_demo_or_dev and self.ALLOW_TEST_WEBHOOK
+
+    def validate_runtime_security(self) -> None:
+        """
+        Startup integrity check: fails closed in production / connected mode if mandatory secrets
+        are missing or use static example/default values.
+        """
+        if not self.is_safe_demo_or_dev:
+            errors = []
+            insecure_placeholders = {
+                "rentkom-demo-internal-key-2026",
+                "rentkom-demo-admin-key-2026",
+                "your_secure_random_internal_api_key_32_bytes_hex",
+                "your_secure_random_admin_api_key_32_bytes_hex",
+                "admin",
+                "postgres",
+            }
+            if (
+                not self.INTERNAL_API_KEY
+                or self.INTERNAL_API_KEY.startswith("rentkom-demo")
+                or self.INTERNAL_API_KEY in insecure_placeholders
+            ):
+                errors.append("INTERNAL_API_KEY must be configured with a non-demo secret in production/connected mode.")
+            if (
+                not self.ADMIN_API_KEY
+                or self.ADMIN_API_KEY.startswith("rentkom-demo")
+                or self.ADMIN_API_KEY in insecure_placeholders
+            ):
+                errors.append("ADMIN_API_KEY must be configured with a non-demo secret in production/connected mode.")
+
+            env_lower = (self.ENVIRONMENT or "").strip().lower()
+            if env_lower == "production":
+                if self.NOTIFICATION_PROVIDER == "mock":
+                    errors.append("NOTIFICATION_PROVIDER cannot be 'mock' in production mode.")
+                try:
+                    parsed_db = urlparse(self.DATABASE_URL)
+                    if parsed_db.password in ("postgres", "admin", "") and not self.DATABASE_URL.startswith("sqlite"):
+                        errors.append("DATABASE_URL cannot use default/empty password ('postgres'/'admin') in production mode.")
+                except Exception:
+                    pass
+                if self.TELEGRAM_BOT_TOKEN and self.TELEGRAM_BOT_TOKEN.startswith("demo"):
+                    errors.append("Demo TELEGRAM_BOT_TOKEN cannot be used in production mode.")
+
+            if errors:
+                raise RuntimeError("Security Startup Failure: " + " | ".join(errors))
+
 
 settings = Settings()

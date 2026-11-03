@@ -34,6 +34,9 @@ async def outbox_background_worker(interval_seconds: float = 2.0):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 0. Startup: validate runtime security configuration (fail-closed in production)
+    settings.validate_runtime_security()
+
     # 1. Startup: verify/create schema and launch background outbox worker if enabled
     Base.metadata.create_all(bind=engine)
     worker_task = None
@@ -57,7 +60,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
