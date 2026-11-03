@@ -45,7 +45,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/api/v1/telegram/inbox/guard",
+        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + '/api/v1/telegram/inbox/guard' }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -216,7 +216,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/api/v1/telegram/mock-dispatcher",
+        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -245,7 +245,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/api/v1/telegram/mock-dispatcher",
+        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -274,7 +274,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/api/v1/telegram/mock-dispatcher",
+        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -303,7 +303,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/api/v1/rag/ask",
+        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + '/api/v1/rag/ask' }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -325,7 +325,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/api/v1/telegram/mock-dispatcher",
+        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -354,14 +354,16 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/api/v1/telegram/inbox/complete",
+        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + '/api/v1/telegram/inbox/complete' }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
         "jsonBody": "={{ { update_id: $('Acquire Telegram Inbox Guard').item.json.update_id, route: 'Executed', response_text: $json.result ? $json.result.text : 'OK' } }}",
         "options": {
           "timeout": 15000
-        }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "u-node-inbox-complete",
       "name": "Finalize Telegram Inbox",
@@ -370,7 +372,13 @@
       "position": [
         1640,
         360
-      ]
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomInternalAuth",
+          "name": "Rentkom Internal Auth"
+        }
+      }
     }
   ],
   "connections": {

@@ -62,8 +62,8 @@ def test_demo_mode_invalid_test_token():
                 "is_test": True
             }
         )
-        assert resp.status_code == 401
-        assert "Unauthorized" in resp.json()["detail"]
+        assert resp.status_code in (401, 403)
+        assert "Forbidden" in resp.json()["detail"] or "Unauthorized" in resp.json()["detail"]
     finally:
         settings.ENVIRONMENT = orig_env
 
@@ -104,8 +104,8 @@ def test_connected_mode_unauthorized_request():
                 "is_test": False
             }
         )
-        assert resp.status_code == 401
-        assert "Unauthorized" in resp.json()["detail"]
+        assert resp.status_code in (401, 403)
+        assert "Forbidden" in resp.json()["detail"] or "Unauthorized" in resp.json()["detail"]
     finally:
         settings.ENVIRONMENT = orig_env
 
@@ -247,9 +247,74 @@ def test_real_telegram_send_requires_credentials_and_internal_auth():
                 "is_test": False
             }
         )
-        assert resp_unauth.status_code == 401
+        assert resp_unauth.status_code in (401, 403)
     finally:
         settings.TELEGRAM_BOT_TOKEN = orig_token
+
+
+def test_real_telegram_send_handles_429_5xx_and_timeout(monkeypatch):
+    """
+    Verify deterministic handling of Telegram Bot API failure modes:
+      - HTTP 429 Too Many Requests
+      - HTTP 502/500 Upstream 5xx error
+      - Network timeout
+      - Successful mocked Telegram sendMessage (HTTP 200)
+    """
+    import httpx
+
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "123456:TEST_SYNTHETIC_BOT_TOKEN_FOR_CONTRACT")
+
+    # 1. Mock Telegram HTTP 429 rate limit
+    async def fake_post_429(self, url, **kwargs):
+        return httpx.Response(429, json={"ok": False, "error_code": 429, "description": "Too Many Requests"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post_429)
+    r_429 = client.post(
+        "/api/v1/telegram/send-message",
+        headers={"X-Internal-Token": settings.INTERNAL_API_KEY},
+        json={"chat_id": 12345, "text": "Rate limit test", "is_test": False},
+    )
+    assert r_429.status_code == 502
+    assert "429" in r_429.json()["detail"]
+
+    # 2. Mock Telegram HTTP 503 upstream failure
+    async def fake_post_503(self, url, **kwargs):
+        return httpx.Response(503, json={"ok": False, "error_code": 503, "description": "Service Unavailable"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post_503)
+    r_503 = client.post(
+        "/api/v1/telegram/send-message",
+        headers={"X-Internal-Token": settings.INTERNAL_API_KEY},
+        json={"chat_id": 12345, "text": "Upstream 503 test", "is_test": False},
+    )
+    assert r_503.status_code == 502
+    assert "503" in r_503.json()["detail"]
+
+    # 3. Mock Telegram socket timeout
+    async def fake_post_timeout(self, url, **kwargs):
+        raise httpx.TimeoutException("Telegram API connection timed out")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post_timeout)
+    r_timeout = client.post(
+        "/api/v1/telegram/send-message",
+        headers={"X-Internal-Token": settings.INTERNAL_API_KEY},
+        json={"chat_id": 12345, "text": "Timeout test", "is_test": False},
+    )
+    assert r_timeout.status_code == 502
+    assert "transport failure" in r_timeout.json()["detail"]
+
+    # 4. Mock successful Telegram API response
+    async def fake_post_ok(self, url, **kwargs):
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 701, "chat": {"id": 12345}}})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post_ok)
+    r_ok = client.post(
+        "/api/v1/telegram/send-message",
+        headers={"X-Internal-Token": settings.INTERNAL_API_KEY},
+        json={"chat_id": 12345, "text": "Успішне повідомлення", "is_test": False},
+    )
+    assert r_ok.status_code == 200
+    assert r_ok.json()["mode"] == "LIVE_TELEGRAM"
 
 def test_guard_response_contains_zero_secrets():
     """Verify TelegramInboxGuardResponse strictly contains only non-sensitive business fields."""

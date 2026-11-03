@@ -68,11 +68,11 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8000/api/v1/feedbacks/",
+        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + '/api/v1/feedbacks/' }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { client_identifier: ($json.body && $json.body[\"Ім’я клієнта\"]) ? $json.body[\"Ім’я клієнта\"] : ($json[\"Ім’я клієнта\"]) ? $json[\"Ім’я клієнта\"] : ($json.body && $json.body.client_identifier) ? $json.body.client_identifier : $json.client_identifier ? $json.client_identifier : 'Анонімний клієнт', service_rating: Number(($json.body && $json.body[\"Оцінка сервісу\"]) ? $json.body[\"Оцінка сервісу\"] : ($json[\"Оцінка сервісу\"]) ? $json[\"Оцінка сервісу\"] : ($json.body && $json.body.service_rating) ? $json.body.service_rating : $json.service_rating ? $json.service_rating : 5), realtor_rating: Number(($json.body && $json.body[\"Оцінка рієлтора\"]) ? $json.body[\"Оцінка рієлтора\"] : ($json[\"Оцінка рієлтора\"]) ? $json[\"Оцінка рієлтора\"] : ($json.body && $json.body.realtor_rating) ? $json.body.realtor_rating : $json.realtor_rating ? $json.realtor_rating : 5), feedback_text: (($json.body && $json.body[\"Що було зручно?\"]) ? 'Зручно: ' + $json.body[\"Що було зручно?\"] + '. ' : ($json[\"Що було зручно?\"]) ? 'Зручно: ' + $json[\"Що було зручно?\"] + '. ' : '') + (($json.body && $json.body[\"Що викликало труднощі?\"]) ? 'Труднощі: ' + $json.body[\"Що викликало труднощі?\"] : ($json[\"Що викликало труднощі?\"]) ? 'Труднощі: ' + $json[\"Що викликало труднощі?\"] : '') || ($json.body && $json.body.feedback_text ? $json.body.feedback_text : $json.feedback_text ? $json.feedback_text : ''), source_channel: 'GOOGLE_SHEETS', source_row_id: String(($json.body && $json.body.row_number) ? $json.body.row_number : $json.row_number ? $json.row_number : ($json.body && $json.body.id) ? $json.body.id : $json.id ? $json.id : '') } }}",
+        "jsonBody": "={{ { client_identifier: ($json.body && $json.body[\"Ім’я клієнта\"]) ? $json.body[\"Ім’я клієнта\"] : ($json[\"Ім’я клієнта\"]) ? $json[\"Ім’я клієнта\"] : ($json.body && $json.body.client_identifier) ? $json.body.client_identifier : $json.client_identifier ? $json.client_identifier : 'Анонімний клієнт', service_rating: (($json.body && $json.body[\"Оцінка сервісу\"] !== undefined) ? Number($json.body[\"Оцінка сервісу\"]) : ($json[\"Оцінка сервісу\"] !== undefined) ? Number($json[\"Оцінка сервісу\"]) : ($json.body && $json.body.service_rating !== undefined) ? Number($json.body.service_rating) : ($json.service_rating !== undefined) ? Number($json.service_rating) : null), realtor_rating: (($json.body && $json.body[\"Оцінка рієлтора\"] !== undefined) ? Number($json.body[\"Оцінка рієлтора\"]) : ($json[\"Оцінка рієлтора\"] !== undefined) ? Number($json[\"Оцінка рієлтора\"]) : ($json.body && $json.body.realtor_rating !== undefined) ? Number($json.body.realtor_rating) : ($json.realtor_rating !== undefined) ? Number($json.realtor_rating) : null), feedback_text: (($json.body && $json.body[\"Що було зручно?\"]) ? 'Зручно: ' + $json.body[\"Що було зручно?\"] + '. ' : ($json[\"Що було зручно?\"]) ? 'Зручно: ' + $json[\"Що було зручно?\"] + '. ' : '') + (($json.body && $json.body[\"Що викликало труднощі?\"]) ? 'Труднощі: ' + $json.body[\"Що викликало труднощі?\"] : ($json[\"Що викликало труднощі?\"]) ? 'Труднощі: ' + $json[\"Що викликало труднощі?\"] : '') || ($json.body && $json.body.feedback_text ? $json.body.feedback_text : $json.feedback_text ? $json.feedback_text : ''), source_channel: 'GOOGLE_SHEETS', source_row_id: String(($json.body && $json.body.row_number) ? $json.body.row_number : $json.row_number ? $json.row_number : ($json.body && $json.body.id) ? $json.body.id : $json.id ? $json.id : '') } }}",
         "options": {
           "timeout": 15000
         }
@@ -88,7 +88,7 @@
     },
     {
       "parameters": {
-        "chatId": "684809016",
+        "chatId": "={{ $env.TELEGRAM_ADMIN_CHAT_ID || '' }}",
         "text": "=🌟 *Новий відгук про агентство нерухомості «Рентком»*\n\nКлієнт: {{$json.client_identifier}}\nОцінка сервісу: {{$json.service_rating}}/5 ⭐\nОцінка рієлтора: {{$json.realtor_rating}}/5 ⭐\nКоментар: {{$json.feedback_text || 'Без додаткового коментаря'}}\nСтатус збереження: Успішно збережено в системі (ID: {{$json.id}})",
         "additionalFields": {
           "parse_mode": "Markdown"

@@ -121,7 +121,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:5680/start",
+        "url": "={{ ($env.TYPING_SIDECAR_URL || 'http://business-api:5680') + '/start' }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -143,7 +143,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:5680/stop",
+        "url": "={{ ($env.TYPING_SIDECAR_URL || 'http://business-api:5680') + '/stop' }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -209,7 +209,7 @@
         "toolDescription": "Шукай тут факти у шести внутрішніх документах агентства Рентком: пам'ятка покупця, порядок підписання договору, перевірка документів, шаблон оренди, опис послуг, правила конфіденційності.",
         "qdrantCollection": {
           "__rl": true,
-          "value": "rag_real_estate",
+          "value": "rag_real_estate_active",
           "mode": "id"
         },
         "topK": 12,

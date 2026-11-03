@@ -7,8 +7,20 @@ import urllib.error
 import pytest
 from core.config import settings
 
+import socket
+
 WEBHOOK_URL = "http://localhost:5678/webhook/rentkom-unified-router-test"
 DB_PATH = os.path.expanduser("~/.n8n/database.sqlite")
+
+
+def _require_live_n8n():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.5)
+    try:
+        if sock.connect_ex(("127.0.0.1", 5678)) != 0 or not os.path.exists(DB_PATH):
+            pytest.skip("Live n8n instance on 127.0.0.1:5678 is not running; skipping live n8n HTTP webhook test.")
+    finally:
+        sock.close()
 
 def send_to_router(message_text, message_id=None, chat_id=12345):
     if message_id is None:
@@ -83,6 +95,7 @@ def wait_for_execution(prev_id, timeout_sec=15):
 @pytest.mark.integration
 def test_router_scenario_1_start_menu():
     """Verify /start command is routed to Greeting & Persistent Keyboard."""
+    _require_live_n8n()
     prev = get_latest_execution()
     prev_id = prev["id"] if prev else 0
     status, _ = send_to_router("/start")
@@ -96,6 +109,7 @@ def test_router_scenario_1_start_menu():
 @pytest.mark.integration
 def test_router_scenario_2_buying_process():
     """Verify buying button routes to Buying Process Handler."""
+    _require_live_n8n()
     prev = get_latest_execution()
     prev_id = prev["id"] if prev else 0
     status, _ = send_to_router("🏢 Процес купівлі/продажу")
@@ -108,6 +122,7 @@ def test_router_scenario_2_buying_process():
 @pytest.mark.integration
 def test_router_scenario_3_landlord_services():
     """Verify renting button routes to Landlord Services Handler."""
+    _require_live_n8n()
     prev = get_latest_execution()
     prev_id = prev["id"] if prev else 0
     status, _ = send_to_router("🔑 Послуги для орендодавців")
@@ -120,6 +135,7 @@ def test_router_scenario_3_landlord_services():
 @pytest.mark.integration
 def test_router_scenario_4_and_5_rag_query():
     """Verify free question triggers RAG pipeline and returns grounded answer."""
+    _require_live_n8n()
     prev = get_latest_execution()
     prev_id = prev["id"] if prev else 0
 
