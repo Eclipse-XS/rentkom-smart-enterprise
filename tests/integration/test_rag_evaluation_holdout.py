@@ -1,6 +1,16 @@
 import pytest
 import asyncio
+import socket
 from core.services.rag_service import query_rag
+
+
+def _is_port_open(port: int) -> bool:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.3)
+    try:
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+    finally:
+        sock.close()
 
 HOLDOUT_TEST_SET = [
     # 1. Procedural questions with Grounded Answers
@@ -71,6 +81,8 @@ def test_rag_forensic_holdout_evaluation(question, expected_cat, required_kw, fo
         assert is_abstention, f"Expected Correct Abstention but got answer: {res.answer}"
         assert not has_hallucination, f"Hallucination in abstention: {res.answer}"
     elif expected_cat == "Correct Answer":
+        if not (_is_port_open(6333) and _is_port_open(11434)):
+            pytest.skip("Live Qdrant (6333) or Ollama (11434) not running; skipping live RAG grounded generation check.")
         assert not is_abstention, (
             f"Unnecessary Abstention detected! Question '{question}' should have grounded answer, but got: {res.answer}"
         )
