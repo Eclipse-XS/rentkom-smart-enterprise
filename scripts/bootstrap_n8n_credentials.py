@@ -24,8 +24,10 @@ if not internal_key:
 
 def bootstrap_credentials():
     print(f"[*] Bootstrapping n8n credentials via official n8n CLI...")
-    if not internal_key:
-        print("[!] Error: INTERNAL_API_KEY environment variable is not set. Please set it in .env or pass it via environment.")
+    test_secret = os.getenv("TEST_WEBHOOK_SECRET", "")
+    telegram_secret = os.getenv("TELEGRAM_SECRET_TOKEN", "")
+    if not internal_key or not test_secret or not telegram_secret:
+        print("[!] Error: INTERNAL_API_KEY, TEST_WEBHOOK_SECRET, and TELEGRAM_SECRET_TOKEN must all be set.")
         sys.exit(1)
 
     # Credential definition conforming to n8n httpHeaderAuth schema
@@ -38,7 +40,22 @@ def bootstrap_credentials():
                 "name": "X-Internal-Token",
                 "value": internal_key
             }
-        }
+        },
+        {
+            "id": "RentkomTestWebhookSecret",
+            "name": "Rentkom Test Webhook Secret",
+            "type": "httpHeaderAuth",
+            "data": {"name": "X-Test-Token", "value": test_secret},
+        },
+        {
+            "id": "RentkomTelegramWebhookSecret",
+            "name": "Rentkom Telegram Webhook Secret",
+            "type": "httpHeaderAuth",
+            "data": {
+                "name": "X-Telegram-Bot-Api-Secret-Token",
+                "value": telegram_secret,
+            },
+        },
     ]
 
     # Write to a secured temporary file
@@ -56,7 +73,7 @@ def bootstrap_credentials():
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True, timeout=60)
 
         if result.returncode == 0:
-            print("[+] Successfully imported RentkomInternalAuth into n8n!")
+            print("[+] Successfully imported the three Rentkom header credentials into n8n.")
             print(result.stdout.strip())
             return True
         else:

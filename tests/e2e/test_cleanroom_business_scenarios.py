@@ -184,7 +184,7 @@ def test_scenario_d_telegram_update_deduplication_guard(db_session):
 def test_scenario_e_data_persistence_across_schema_reload(db_session):
     """Scenario E: Verify data integrity and model relationships in DB."""
     # Ensure at least one request and feedback exist in this session
-    api_post("/requests/", {
+    request_status, _ = api_post("/requests/", {
         "full_name": "Сценарій Е Клієнт",
         "phone": "+380671119988",
         "email": "e_client@rentkom.lviv.ua",
@@ -192,13 +192,15 @@ def test_scenario_e_data_persistence_across_schema_reload(db_session):
         "property_type": "Квартира",
         "property_location": "м. Львів, Центр",
         "consultation_date": "2026-12-01",
-    })
-    api_post("/feedbacks/", {
+    }, headers={"X-Admin-Token": settings.ADMIN_API_KEY})
+    assert request_status in (200, 201)
+    feedback_status, _ = api_post("/feedbacks/", {
         "client_identifier": "+380671119988",
         "service_rating": 5,
         "realtor_rating": 5,
         "feedback_text": "Тест Сценарію Е",
     })
+    assert feedback_status == 201
     with SessionLocal() as db:
         customers_count = db.query(Customer).count()
         requests_count = db.query(ServiceRequest).count()

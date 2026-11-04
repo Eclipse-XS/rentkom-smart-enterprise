@@ -7,6 +7,7 @@
         "httpMethod": "POST",
         "path": "rentkom-telegram-ingress-webhook",
         "responseMode": "onReceived",
+        "authentication": "headerAuth",
         "options": {}
       },
       "id": "u-node-tg-trigger",
@@ -17,13 +18,20 @@
         100,
         320
       ],
-      "webhookId": "rentkom-telegram-ingress-webhook"
+      "webhookId": "rentkom-telegram-ingress-webhook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomTelegramWebhookSecret",
+          "name": "Rentkom Telegram Webhook Secret"
+        }
+      }
     },
     {
       "parameters": {
         "httpMethod": "POST",
         "path": "rentkom-unified-router-test",
         "responseMode": "onReceived",
+        "authentication": "headerAuth",
         "options": {}
       },
       "id": "u-node-test-webhook",
@@ -34,12 +42,18 @@
         100,
         140
       ],
-      "webhookId": "rentkom-unified-router-test"
+      "webhookId": "rentkom-unified-router-test",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomTestWebhookSecret",
+          "name": "Rentkom Test Webhook Secret"
+        }
+      }
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + '/api/v1/telegram/inbox/guard' }}",
+        "url": "http://business-api:8000/api/v1/telegram/inbox/guard",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -53,13 +67,11 @@
             {
               "name": "X-Test-Token",
               "value": "={{ ($json.headers && $json.headers['x-test-token']) ? $json.headers['x-test-token'] : '' }}"
-            },
-            {
-              "name": "X-Internal-Token",
-              "value": "={{ ($json.headers && $json.headers['x-internal-token']) ? $json.headers['x-internal-token'] : '' }}"
             }
           ]
-        }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "u-node-inbox-guard",
       "name": "Acquire Telegram Inbox Guard",
@@ -68,7 +80,13 @@
       "position": [
         360,
         220
-      ]
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomInternalAuth",
+          "name": "Rentkom Internal Auth"
+        }
+      }
     },
     {
       "parameters": {
@@ -210,7 +228,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
+        "url": "={{ 'http://business-api:8000' + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -239,7 +257,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
+        "url": "={{ 'http://business-api:8000' + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -268,7 +286,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
+        "url": "={{ 'http://business-api:8000' + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -297,7 +315,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + '/api/v1/rag/ask' }}",
+        "url": "http://business-api:8000/api/v1/rag/ask",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -319,7 +337,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
+        "url": "={{ 'http://business-api:8000' + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -348,7 +366,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ ($env.BUSINESS_API_URL || 'http://business-api:8000') + '/api/v1/telegram/inbox/complete' }}",
+        "url": "http://business-api:8000/api/v1/telegram/inbox/complete",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",

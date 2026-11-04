@@ -41,6 +41,7 @@ def test_all_eight_n8n_workflows_valid_json_and_zero_localhost_urls():
         assert "connections" in data and isinstance(data["connections"], dict)
         assert "127.0.0.1:8000" not in raw, f"{fname} still contains hardcoded 127.0.0.1:8000"
         assert "127.0.0.1:5680" not in raw, f"{fname} still contains hardcoded 127.0.0.1:5680"
+        assert "$env" not in raw, f"{fname} uses blocked n8n environment access"
         assert "kanaleclipse@gmail.com" not in raw, f"{fname} contains personal email"
         assert "VadymGone123" not in raw, f"{fname} contains hardcoded password"
 
@@ -61,6 +62,14 @@ def test_single_authoritative_active_telegram_router():
     assert unified.get("active") is True
     assert ai_rag.get("active") is False
     assert rule_bot.get("active") is False
+
+    guard = next(n for n in unified["nodes"] if n["name"] == "Acquire Telegram Inbox Guard")
+    headers = guard["parameters"]["headerParameters"]["parameters"]
+    assert all(h["name"].lower() != "x-internal-token" for h in headers)
+    assert guard["credentials"]["httpHeaderAuth"]["id"] == "RentkomInternalAuth"
+    telegram_ingress = next(n for n in unified["nodes"] if n["name"] == "Telegram Ingress")
+    assert telegram_ingress["parameters"]["authentication"] == "headerAuth"
+    assert telegram_ingress["credentials"]["httpHeaderAuth"]["id"] == "RentkomTelegramWebhookSecret"
 
 
 def test_feedback_workflow_does_not_default_missing_ratings_to_five(client):
