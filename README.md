@@ -228,13 +228,14 @@ All 8 workflow definitions in `SMART_ENTERPRISE/automation/n8n/` are validated b
   - Retrieved chunks are sanitized via `sanitize_retrieved_chunk()` and wrapped in `<retrieved_evidence>` untrusted data delimiters.
   - The system prompt explicitly prohibits unlicensed legal representation and includes an informational consultant disclaimer.
 - **30-Question Benchmark (`evaluation/rag_eval_dataset.json` & `evaluation/rag_eval_results.json`)**:
-  - **Recall@K (20 in-domain questions):** `0.85` (17/20 any-source hits; 86.7% single-doc, 20.0% multi-doc full coverage)
-  - **Factual Claim Accuracy (Heuristic Proxy):** `0.80` (16/20 verified against reference claim anchors; Q05, Q08, Q15, Q22 missed)
-  - **Abstention Accuracy (10 out-of-domain & adversarial questions):** `1.00` (10/10 rejected)
-  - **Unnecessary Abstention Rate:** `0.05` (1/20 questions: Q22)
-  - **Unsupported Answer Rate:** `0.0667` (6.67% — 2/30 questions: Q14, Q23 answered from system prompt rules when retrieval missed top-K)
-  - **Citation Entailment Proxy:** `0.7368` (strict source alignment) / `0.8947` (partial grounding)
-  - **Latency (Local CPU inference with `qwen3:4b-instruct`):** `p50 = 22.155s`, `p95 = 30.676s` (Abstention guardrail latency `< 0.001s`).
+  - **Recall@K (20 in-domain questions):** `0.8500` (85.0% any-source hits; 86.7% single-doc, 20.0% multi-doc full coverage)
+  - **Factual Claim Accuracy (Heuristic Proxy):** `0.8000` (80.0% — 16/20 verified against reference claim anchors on un-truncated full text; Q05, Q08, Q15, Q22 missed)
+  - **Abstention Accuracy (10 out-of-domain & adversarial questions):** `1.0000` (10/10 rejected)
+  - **Unnecessary Abstention Rate:** `0.0500` (1/20 questions: Q22)
+  - **Unsupported Answer Rate:** `0.1667` (16.67% — 5/30 questions: Q11, Q13, Q14, Q15, Q23 lacking complete qualifying citation coverage)
+  - **Citation Entailment Proxy:** `0.7368` (14/19 grounded queries have qualifying citations matching expected sources $\ge 0.55$; empty citations strictly fail)
+  - **Latency (Local CPU inference with `qwen3:4b-instruct`):** `p50 = 24.329s`, `p95 = 34.489s` (Abstention guardrail latency `< 0.001s`).
+  - **Evaluation Cache Safety:** Fresh live execution is default (`reuse_existing_responses=False`); full answers and citation objects preserved; legacy or incompatible cache strictly rejected with `IncompatibleCacheError`.
 
 ---
 
@@ -259,16 +260,16 @@ Grafana (`SMART_ENTERPRISE/monitoring/`) provisions two datasource integrations 
 
 ## 15. Testing Strategy & Commands
 
-The automated test suite comprises **114 automated test cases** across unit, integration, and end-to-end layers:
+The automated test suite comprises **120 automated test cases** across unit, integration, and end-to-end layers:
 
 ```bash
-# 1. Run fast unit, security, and workflow contract tests (54 tests, SQLite in-memory):
+# 1. Run fast unit, security, and workflow contract tests (60 tests, SQLite in-memory):
 pytest tests/unit -v --tb=short
 
 # 2. Run SMTP transport & Telegram connected-mode contract tests (20 tests):
 pytest tests/integration/test_smtp_delivery.py tests/integration/test_telegram_connected_mode_contract.py -v --tb=short
 
-# 3. Run full suite including PostgreSQL integration, migrations, backup/restore, and live RAG (114 tests):
+# 3. Run full suite including PostgreSQL integration, migrations, backup/restore, and live RAG (120 tests):
 # Set TEST_DATABASE_URL to an isolated disposable test database (must contain 'test', 'disposable', or 'temp'):
 export TEST_DATABASE_URL="postgresql+psycopg2://postgres@127.0.0.1:5439/rentkom_test"
 pytest tests/ -v --tb=short

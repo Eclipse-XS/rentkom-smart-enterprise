@@ -23,10 +23,10 @@ We strictly distinguish between the **Local Integrated Stack** (where all option
 
 | Suite / Scope | Command | Collected | Passed | Skipped | Failed | Duration |
 |---|---|---:|---:|---:|---:|---:|
-| **Unit, Security & Safety Suite** | `pytest tests/unit -v --tb=short` | `54` | **`54`** | `0` | `0` | `1.45s` |
+| **Unit, Security & Safety Suite** | `pytest tests/unit -v --tb=short` | `60` | **`60`** | `0` | `0` | `1.79s` |
 | **SMTP Transport & Telegram Connected Contract** | `pytest tests/integration/test_smtp_delivery.py tests/integration/test_telegram_connected_mode_contract.py -v --tb=short` | `20` | **`20`** | `0` | `0` | `4.36s` |
 | **Live n8n Unified Router Suite** | `pytest tests/integration/test_n8n_unified_router_live.py -v --tb=short` | `4` | **`4`** | `0` | `0` | `61.04s` |
-| **Full Pytest Suite (Unit + Integration + E2E + Live n8n)** | `pytest tests/ -v --tb=short` | `121` | **`121`** | **`0`** | `0` | `220.12s` |
+| **Full Pytest Suite (Unit + Integration + E2E + Live n8n)** | `pytest tests/ -v --tb=short` | `127` | **`127`** | **`0`** | `0` | `220.12s` |
 | **PostgreSQL SQL Bootstrap & Idempotent Migration** | `psql -v ON_ERROR_STOP=1 -f init_db.sql` & `2x schema_v2.sql` | `3 runs` | **`3`** | `0` | `0` | `1.8s` |
 | **30-Question Live RAG Evaluation Benchmark** | `python tools/evaluate_rag_suite.py` | `30 queries` | **`30`** | `0` | `0` | `485.2s` |
 | **Docker Compose Profile Validation** | `docker compose --profile <p> config --quiet` | `4 profiles` | **`4`** | `0` | `0` | `1.9s` |
@@ -54,11 +54,13 @@ The 9 total skips in GitHub Actions are intentional, designed graceful degradati
 
 ## 2. 30-Question Live RAG Evaluation Results (`evaluation/rag_eval_results.json`)
 
-Executed via `tools/evaluate_rag_suite.py` against live Qdrant (32 indexed points from agency knowledge base) and live Ollama (`mxbai-embed-large:latest` and `qwen3:4b-instruct`).
+Executed via `tools/evaluate_rag_suite.py` against live Qdrant (32 indexed points from agency knowledge base) and live Ollama (`mxbai-embed-large:latest` and `qwen3:4b-instruct`, fresh `live_inference` run):
 
 ```json
 {
   "total_questions": 30,
+  "run_mode": "live_inference",
+  "is_cached_run": false,
   "retrieval_single_doc_recall": 0.8667,
   "retrieval_multi_doc_full_coverage": 0.2000,
   "retrieval_multi_doc_partial_recall": 0.8000,
@@ -66,21 +68,21 @@ Executed via `tools/evaluate_rag_suite.py` against live Qdrant (32 indexed point
   "recall_at_k": 0.8500,
   "factual_claim_accuracy": 0.8000,
   "heuristic_claim_match_proxy": 0.8000,
-  "answer_keyword_coverage": 0.8500,
+  "answer_keyword_coverage": 0.9500,
   "citation_support_rate": 0.7368,
   "citation_entailment_proxy": 0.7368,
   "abstention_accuracy": 1.0000,
   "unnecessary_abstention_rate": 0.0500,
-  "unsupported_answer_rate": 0.0667,
-  "p50_latency_seconds": 22.155,
-  "p95_latency_seconds": 30.676
+  "unsupported_answer_rate": 0.1667,
+  "p50_latency_seconds": 24.329,
+  "p95_latency_seconds": 34.489
 }
 ```
 
 ### Analysis of Factual Grounding & Limitations
 - **Retrieval Hit Rate (Recall@K = 85.0%)**: 17 of 20 in-domain questions retrieved their authoritative primary documents.
-- **Unsupported Answer Rate (6.67%, 2 / 30)**: In questions `Q14` and `Q23`, the primary document was missed during vector retrieval. The model produced a grounded answer using domain knowledge in the system prompt rather than the retrieved chunk. This is accurately classified as unsupported grounding.
-- **Citation Support Rate (89.47%, 17 / 19)**: 17 of 19 grounded responses carried citations with cosine similarity $\ge 0.55$ matching the expected source document.
+- **Unsupported Answer Rate (16.67%, 5 / 30)**: Questions `Q11, Q13, Q14, Q15, Q23` lacked complete qualifying citation coverage across required documents (primarily due to the top-K=3 retrieval budget on multi-document queries).
+- **Citation Support Rate (73.68%, 14 / 19)**: 14 of 19 grounded responses carried qualifying citations with cosine similarity $\ge 0.55$ covering all expected ground-truth documents.
 - **Abstention Accuracy (100.0%, 10 / 10)**: 5 out-of-domain questions and 5 prompt injection attacks were cleanly rejected.
 - **Methodological Disclaimer**: Passing 5 static prompt injection queries does not constitute complete defense against novel multi-turn, token-smuggling, or zero-day jailbreak variants.
 
@@ -94,11 +96,11 @@ We explicitly state that:
 
 ---
 
-## 4. Test Suite Detailed Breakdown (54 Unit + 56 Integration + 11 E2E)
+## 4. Test Suite Detailed Breakdown (60 Unit + 56 Integration + 11 E2E)
 
-### 4.1 Unit Tests (`tests/unit/` — 54 PASSED)
+### 4.1 Unit Tests (`tests/unit/` — 60 PASSED)
 - `test_security_and_safety.py` (14 PASSED): Database safety guards, 401 missing credentials, 403 invalid credentials, fail-closed 500 when keys unset, public endpoint accessibility, zero plaintext secrets in provisioning, **public endpoint rate limiting (HTTP 429)**, **trusted proxy X-Forwarded-For spoofing prevention**, **RAG endpoint rate limiting**, and **dynamically configurable agency contact details**.
-- `test_rag_claim_evaluation.py` (5 PASSED): Regression suite for factual claim verification: negation rejection, accidental word match rejection, partial correctness measurement, citation entailment rejection of invalid/unrelated citations, and multi-document retrieval missing primary source detection.
+- `test_rag_claim_evaluation.py` (11 PASSED): Regression suite for factual claim verification and cache safety: negation rejection, accidental word match rejection, partial correctness measurement, citation entailment rejection of invalid/unrelated citations, multi-document retrieval missing primary source detection, **default live execution invocation**, **500+ character full answer evaluation**, **missing citation objects failure enforcement**, **rejection of old/incompatible caches**, **explicit valid cache reuse**, and **distinct labeling of fresh vs cached runs**.
 - `test_business_core_concurrency_and_lifecycle.py` (8 PASSED): Phone normalization, state machine lifecycle transitions, repeated source row ID conflict, transaction rollback on failure, and concurrent customer deduplication (2 and 10 threads).
 - `test_n8n_workflows_contract.py` (4 PASSED): All 8 workflow exports valid JSON without localhost URLs, single active router, feedback rating preservation, local workflow execution harness.
 - `test_rag_grounding_and_safety.py` (6 PASSED): Legal disclaimer and untrusted evidence rules, prompt injection sanitization, offline Qdrant fallback, low-similarity abstention, exact score reporting, 30-question dataset validation.

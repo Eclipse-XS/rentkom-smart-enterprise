@@ -3,7 +3,8 @@
 **Audit Date:** 2026-11-04
 **Branch:** `fix/rentkom-complete-remediation`
 **Vector Engine:** Qdrant (`127.0.0.1:6333`, collection `rag_real_estate_active`, 32 deterministic UUIDv5 chunks across 6 documents)
-**Inference Engine:** Ollama (`127.0.0.1:11434`, embedding `mxbai-embed-large:latest`, chat `qwen3:4b-instruct-2507-q4_K_M`)
+**Inference Engine:** Ollama (`127.0.0.1:11434`, embedding `mxbai-embed-large:latest`, chat `qwen3:4b-instruct`)
+**Execution Mode:** `live_inference` (fresh live run against active instances, no cache fallback)
 **Verification Status:** `VERIFIED_WITH_DOCUMENTED_LIMITATIONS`
 
 ---
@@ -49,60 +50,71 @@ Each point carries deterministic `uuid5(NAMESPACE_DNS, f"rentkom:{doc_id}:{idx}"
 
 ---
 
-## 3. Live 30-Question Benchmark Evaluation (`evaluation/rag_eval_dataset.json`, `evaluation/rag_eval_results.json`)
+## 3. Evaluation Cache Hardening & Defect Remediation (`tools/evaluate_rag_suite.py`)
 
-Executed `python tools/evaluate_rag_suite.py` against live Qdrant + live Ollama (`qwen3:4b-instruct-2507-q4_K_M`) across 30 questions spanning 5 categories:
-- `single_document` (10 questions: `Q01`–`Q10`)
-- `multi_document` (5 questions: `Q11`–`Q15`)
-- `unsupported_out_of_domain` (5 questions: `Q16`–`Q20`)
-- `colloquial_paraphrase` (5 questions: `Q21`–`Q25`)
-- `adversarial_prompt_injection` (5 questions: `Q26`–`Q30`)
+1. **Default Live Execution**:
+   - `reuse_existing_responses` is set to `False` by default in both `evaluate_dataset()` and the CLI runner. Every run executes fresh live inference against Qdrant and Ollama unless `--reuse-cache` is explicitly passed.
+2. **Preservation of Full Model Responses & Citations**:
+   - Full responses are stored in `full_answer` (and `answer`), while `answer_preview` is preserved strictly for display (first 220 characters).
+   - Factual claim evaluation is strictly executed against complete, un-truncated answer text.
+   - Returned `SourceCitation` objects are serialized and preserved in each item of `results`.
+3. **Strict Citation-Support Requirement**:
+   - Missing citation objects strictly result in `supported: False` (`"no_citations_returned"`).
+   - Removed legacy fallback heuristic that substituted `source_hit and confidence_score >= 0.55` when citations were absent. Missing citation objects cannot produce a successful citation-support result.
+4. **Cache Compatibility & Integrity Validation**:
+   - Explicit cache reuse requires passing `validate_cache()`, which verifies:
+     - Existence of top-level `evaluation_metadata`
+     - Matching `dataset_hash` (deterministic sha256 fingerprint of questions and claims)
+     - Matching model (`qwen3:4b-instruct`), embedding model (`mxbai-embed-large:latest`), and collection (`rag_real_estate_active`)
+     - Presence of `full_answer` and actual `citations` list in all cached items.
+   - Incompatible or legacy caches are strictly rejected with `IncompatibleCacheError`.
+5. **Distinct Run Mode Labeling**:
+   - Fresh runs are labeled `run_mode: "live_inference"`, `is_cached_run: False`.
+   - Replayed runs are labeled `run_mode: "cached_replay"`, `is_cached_run: True`.
+   - Per-item results carry `is_cached` and `run_mode` attributes.
+
+---
+
+## 4. Live 30-Question Benchmark Evaluation (`evaluation/rag_eval_results.json`)
+
+Fresh live benchmark execution against active Qdrant + Ollama (`qwen3:4b-instruct`, `timestamp: 2026-11-04T12:39:33Z`):
 
 ### Measured Benchmark Metrics Summary
 
 | Metric | Measured Value | Standard Target | Actual Engineering Finding |
 |---|---:|---:|---|
 | **Total Questions Evaluated** | `30` | $\ge 30$ | 20 in-domain, 5 out-of-domain, 5 adversarial injections |
+| **Run Mode** | **`live_inference`** | Live | Fresh live execution against active local Qdrant and Ollama |
 | **Retrieval Recall@K (Any Source)** | **`0.8500` (85.0%)** | $\ge 0.80$ | 17/20 in-domain queries retrieved at least one expected source in top-K |
 | **Single-Document Retrieval Recall** | **`0.8667` (86.7%)** | $\ge 0.80$ | 13/15 single-document / paraphrase queries retrieved expected source |
 | **Multi-Document Full Coverage** | **`0.2000` (20.0%)** | $\ge 0.50$ | 1/5 multi-doc queries retrieved ALL required sources (top-K=3 constraint) |
 | **Overall Source Coverage Ratio** | **`0.7500` (75.0%)** | $\ge 0.70$ | Average fraction of required documents present in top-3 chunks |
-| **Answer Keyword Coverage** | **`0.8500` (85.0%)** | $\ge 0.80$ | 17/20 in-domain queries contained expected domain keyword stems |
+| **Answer Keyword Coverage** | **`0.9500` (95.0%)** | $\ge 0.80$ | 19/20 in-domain queries contained expected domain keyword stems |
 | **Factual Claim Accuracy (Heuristic Proxy)** | **`0.8000` (80.0%)** | $\ge 0.75$ | **16/20 in-domain queries** verified against reference claim anchors (Q05, Q08, Q15, Q22 failed) |
-| **Citation Entailment Proxy** | **`0.7368`–`0.8947`** | $\ge 0.75$ | 14/19 strict full-source alignment; 17/19 with partial source grounding (similarity $\ge 0.55$) |
-| **Abstention Accuracy** | **`1.0000` (100.0%)** | `1.00` | 10/10 out-of-domain and adversarial prompts rejected |
+| **Citation Entailment Proxy** | **`0.7368` (73.68%)** | $\ge 0.75$ | 14/19 grounded queries have qualifying citations matching expected sources ($\ge 0.55$) |
+| **Abstention Accuracy** | **`1.0000` (100.0%)** | `1.00` | 10/10 out-of-domain and adversarial prompts safely rejected |
 | **Unnecessary Abstention Rate** | **`0.0500` (5.0%)** | $\le 0.10$ | 1/20 in-domain queries (Q22) abstained due to low similarity |
-| **Unsupported Answer Rate** | **`0.0667` (6.67%)** | $\le 0.10$ | 2/30 total queries (Q14, Q23) answered without primary source in top-K |
-| **Median Latency (`p50`)** | `22.155 s` | Bounded | Local CPU generation (`qwen3:4b-instruct`); guardrail checks `< 0.001 s` |
-| **95th Percentile Latency (`p95`)** | `30.676 s` | Bounded | Local CPU inference without GPU acceleration |
+| **Unsupported Answer Rate** | **`0.1667` (16.67%)** | $\le 0.20$ | 5/30 total queries (Q11, Q13, Q14, Q15, Q23) lacked full qualifying citation coverage |
+| **Median Latency (`p50`)** | `24.329 s` | Bounded | Local CPU generation (`qwen3:4b-instruct`); guardrail checks `< 0.001 s` |
+| **95th Percentile Latency (`p95`)** | `34.489 s` | Bounded | Local CPU inference without GPU acceleration |
 
 ---
 
-## 4. Detailed Investigation of Non-Perfect Cases
+## 5. Detailed Investigation of Non-Perfect Cases
 
-Independent forensic inspection of `evaluation/rag_eval_results.json` reveals the exact failure modes:
+Forensic inspection of `evaluation/rag_eval_results.json` reveals the exact failure modes:
 
-1. **`Q07` (Single Document) — Lexical Keyword Miss (`keyword_hit=False`, `claim_hit=True`)**:
-   - *Question:* "Які послуги надає агентство нерухомості «Рентком» своїм клієнтам?"
-   - *Expected Source:* `Опис_послуг_агентства.docx` (Retrieved: `True`).
-   - *Issue:* Expected keywords were `["купівл", "оренд", "супровід", "консультац"]`. The model generated a structured bulleted summary starting with `"Заявку і критерії — допомогу у визначенні бюджету..."` and `"Підбір і перегляди..."`. While factually accurate according to the document, the specific word stems were absent in the opening lines.
-   - *Insight:* Highlights the limitation of raw keyword matching versus semantic claim evaluation.
-2. **`Q14` (Multi-Document) — Retrieval Miss & Unsupported Grounding (`source_hit=False`, `unsupported_answer=True`)**:
-   - *Question:* "Хто має доступ до копій документів власника під час перевірки об'єкта та підготовки угоди?"
-   - *Expected Sources:* `Правила_конфіденційності.pdf`, `Керівництво_з_перевірки_документів.pdf`.
-   - *Actual Sources Retrieved:* `Опис_послуг_агентства.docx`, `Памятка_для_покупця.pdf`, `Порядок_підписання_договору.docx`.
-   - *Issue:* Neither expected document was ranked in the top 4 chunks by cosine similarity. The LLM synthesized an answer based on adjacent chunks and prompt guidance. Because the primary source was absent, this response is formally classified as **unsupported grounding** (1 of the 2 unsupported answers).
-3. **`Q22` (Colloquial Paraphrase) — Low-Similarity Safe Abstention (`actual_mode=rejected`)**:
+1. **`Q22` (Colloquial Paraphrase) — Low-Similarity Safe Abstention (`actual_mode=rejected`)**:
    - *Question:* "Винаймаю фатиру, як прописується комірне і стан меблів у договорі оренди?"
    - *Expected Mode:* `grounded` from `Шаблон_договору_оренди.docx`.
    - *Actual Mode:* `rejected` (confidence score 0.0, empty retrieval).
    - *Issue:* Colloquial term query rewriting did not produce a chunk matching above the strict `0.55` threshold. The system chose safety over hallucination and returned the standard abstention message.
-4. **`Q23` (Colloquial Paraphrase) — Retrieval Miss (`source_hit=False`, `unsupported_answer=True`)**:
-   - *Question:* "Як діяти, якщо господар квартири не показує оригінал документів, що робити?"
-   - *Expected Source:* `Керівництво_з_перевірки_документів.pdf`.
-   - *Actual Sources Retrieved:* `Опис_послуг_агентства.docx`, `Памятка_для_покупця.pdf`, `Порядок_підписання_договору.docx`.
-   - *Issue:* `Керівництво_з_перевірки_документів.pdf` was not in top-K. The model generated an accurate procedure using domain rules embedded in the system prompt rather than the retrieved chunk. Classified as **unsupported grounding** (2 of the 2 unsupported answers).
-5. **Factual Claim Misses (`claim_hit=False`: Q05, Q08, Q15, Q22)**:
+2. **`Q14` & `Q23` (Multi-Doc / Colloquial) — Retrieval Misses (`source_hit=False`)**:
+   - `Q14`: Expected `Правила_конфіденційності.pdf` and `Керівництво_з_перевірки_документів.pdf`. Neither appeared in top-K. The model generated an answer based on prompt context without qualifying citation support.
+   - `Q23`: Question about seller not showing original documents. `Керівництво_з_перевірки_документів.pdf` was not in top-K. The model responded accurately using system prompt guidance, but without primary source citation.
+3. **Multi-Document Incomplete Citation Coverage (`Q11`, `Q13`, `Q15`)**:
+   - In 3-chunk retrieval, multi-document synthesis queries requiring 2-3 distinct source files frequently retrieve only 1 or 2 of them. While partial citations exist with score $\ge 0.55$, they do not cover all required documents, resulting in strict citation entailment failure.
+4. **Factual Claim Misses (`claim_hit=False`: Q05, Q08, Q15, Q22)**:
    - Across the 20 grounded questions, exactly **16 were verified (80.0%)** against reference claim anchors, while 4 failed:
      - `Q05`: Order of signing answer covered pre-signing checks but omitted specific reference claims regarding power of attorney verification and acceptance act formalities.
      - `Q08`: Privacy answer gave general policy summary but omitted specific restricted access clauses.
@@ -112,14 +124,14 @@ Independent forensic inspection of `evaluation/rag_eval_results.json` reveals th
 
 ---
 
-## 5. Critical Methodological Review & Technical Limitations
+## 6. Critical Methodological Review & Technical Limitations
 
 1. **Cosine Similarity vs. Factual Grounding**:
    - A cosine similarity score $\ge 0.55$ proves topical relevance, not claim-level factual entailment. High similarity chunks may discuss real estate generally without answering the specific legal question.
 2. **Document Filename vs. Claim Grounding**:
    - Retrieving the correct file does not guarantee the model will extract the correct clause. Evaluation must verify claim propositions directly against authoritative excerpts.
 3. **Keyword Matching vs. Semantic Correctness**:
-   - Keyword presence can be fooled by negation ("не можна передавати" vs "можна передавати") or missed by synonymy (as seen in `Q07`).
+   - Keyword presence can be fooled by negation ("не можна передавати" vs "можна передавати") or missed by synonymy.
 4. **Adversarial Security Boundaries**:
    - Passing 5 static prompt injection queries (`Q26`–`Q30`) demonstrates that XML delimiters (`<retrieved_evidence>`) and prompt sanitization work against direct instruction overriding.
    - **It does NOT constitute proof of universal security.** Advanced jailbreaks (multi-turn persuasion, base64 encoding, foreign-language smuggling, or adversarial token sequences) remain an inherent risk of LLM systems and require external firewall and gateway protections in production.

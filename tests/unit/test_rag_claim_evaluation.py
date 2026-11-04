@@ -1,8 +1,17 @@
+import json
+import os
+from unittest.mock import AsyncMock, patch
 import pytest
+
+from core.schemas import RAGQueryResponse, SourceCitation
 from tools.evaluate_rag_suite import (
-    verify_factual_claim,
-    evaluate_retrieval,
+    IncompatibleCacheError,
+    compute_dataset_hash,
     evaluate_citation_entailment_proxy,
+    evaluate_dataset,
+    evaluate_retrieval,
+    validate_cache,
+    verify_factual_claim,
 )
 
 
@@ -169,4 +178,379 @@ def test_multi_document_retrieval_flags_missing_primary_document():
     # Case C: For single_document question, retrieving any expected source is a source_hit
     single_expected = {"Керівництво_з_перевірки_документів.pdf"}
     retrieval_single = evaluate_retrieval("single_document", single_expected, actual_sources_incomplete)
-    assert retrieval_single["source_hit"] is False  # wasn't in actual_sources_incomplete
+    assert retrieval_single["source_hit"] is False
+
+
+@pytest.fixture
+def sample_dataset_items():
+    return [
+        {
+            "id": "T01",
+            "category": "single_document",
+            "question": "Які етапи перевірки регламентовано?",
+            "expected_mode": "grounded",
+            "expected_sources": ["Керівництво_з_перевірки_документів.pdf"],
+            "expected_keywords": ["етап", "6"],
+            "expected_factual_claims": [
+                {
+                    "statement": "визначено 6 етапів",
+                    "source_fragment": "встановлює 6 послідовних етапів",
+                    "required_anchors": ["6", "етап"],
+                    "forbidden_negations": ["не 6"],
+                }
+            ],
+            "reference_evidence": "встановлює 6 послідовних етапів",
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_default_evaluation_invokes_live_query_rag(tmp_path, sample_dataset_items):
+    """
+    Regression Test 6:
+    Proves that default evaluation (reuse_existing_responses=False) always invokes live query_rag,
+    even if an existing output file is present on disk.
+    """
+    ds_path = tmp_path / "dataset.json"
+    ds_path.write_text(json.dumps(sample_dataset_items, ensure_ascii=False), encoding="utf-8")
+    res_path = tmp_path / "results.json"
+    res_path.write_text(json.dumps({"results": []}), encoding="utf-8")
+
+    mock_resp = RAGQueryResponse(
+        answer="Встановлено 6 послідовних етапів перевірки документів.",
+        sources=["Керівництво_з_перевірки_документів.pdf"],
+        citations=[SourceCitation(document_name="Керівництво_з_перевірки_документів.pdf", score=0.82)],
+        confidence_score=0.82,
+        latency_seconds=0.12,
+        mode="grounded",
+    )
+
+    with patch("tools.evaluate_rag_suite.query_rag", new_callable=AsyncMock) as mock_query:
+        mock_query.return_value = mock_resp
+        summary = await evaluate_dataset(
+            dataset_path=str(ds_path),
+            results_path=str(res_path),
+        )
+
+        assert mock_query.call_count == 1
+        assert summary["run_mode"] == "live_inference"
+        assert summary["is_cached_run"] is False
+        assert summary["evaluation_metadata"]["run_mode"] == "live_inference"
+        assert summary["results"][0]["is_cached"] is False
+        assert summary["results"][0]["run_mode"] == "live_inference"
+
+
+@pytest.mark.anyio
+async def test_500_char_answer_evaluated_in_full(tmp_path, sample_dataset_items):
+    """
+    Regression Test 7:
+    Proves that a 500+ character answer is evaluated in full, and claims positioned
+    beyond character 220 are NOT truncated or lost.
+    """
+    # Construct a 500+ character answer where the factual proposition is located at index 260
+    prefix = "Загальна інформація про діяльність агентства нерухомості Рентком у Львові. " * 4  # ~300 chars
+    factual_anchor = " Встановлено 6 послідовних етапів регламентної перевірки документів. "
+    suffix = "Звертайтесь до чергового рієлтора для отримання повного юридичного супроводу правочину. " * 3
+    full_500_answer = prefix + factual_anchor + suffix
+    assert len(full_500_answer) >= 500
+
+    claim = sample_dataset_items[0]["expected_factual_claims"][0]
+
+    # If evaluated against the 220-character preview, the claim would fail
+    preview_220 = full_500_answer[:220]
+    preview_check = verify_factual_claim(preview_220, claim)
+    assert preview_check["verified"] is False
+    assert "6" in preview_check["missing_anchors"]
+
+    # Evaluated against the full answer, the claim succeeds
+    full_check = verify_factual_claim(full_500_answer, claim)
+    assert full_check["verified"] is True
+    assert full_check["matched_anchors"] == ["6", "етап"]
+
+    # In evaluate_dataset, full_answer is preserved and evaluated
+    ds_path = tmp_path / "dataset.json"
+    ds_path.write_text(json.dumps(sample_dataset_items, ensure_ascii=False), encoding="utf-8")
+    res_path = tmp_path / "results.json"
+
+    mock_resp = RAGQueryResponse(
+        answer=full_500_answer,
+        sources=["Керівництво_з_перевірки_документів.pdf"],
+        citations=[SourceCitation(document_name="Керівництво_з_перевірки_документів.pdf", score=0.88)],
+        confidence_score=0.88,
+        latency_seconds=0.15,
+        mode="grounded",
+    )
+
+    with patch("tools.evaluate_rag_suite.query_rag", new_callable=AsyncMock) as mock_query:
+        mock_query.return_value = mock_resp
+        summary = await evaluate_dataset(
+            dataset_path=str(ds_path),
+            results_path=str(res_path),
+        )
+
+        res_item = summary["results"][0]
+        assert len(res_item["full_answer"]) >= 500
+        assert len(res_item["answer_preview"]) <= 220
+        assert res_item["claim_hit"] is True
+        assert len(res_item["verified_claims"]) == 1
+
+
+@pytest.mark.anyio
+async def test_missing_citation_objects_cannot_produce_successful_citation_support(tmp_path, sample_dataset_items):
+    """
+    Regression Test 8:
+    Proves that missing citation objects CANNOT produce a successful citation-support result,
+    even when source_hit is True and confidence_score is high (e.g. 0.95).
+    """
+    expected_sources = {"Керівництво_з_перевірки_документів.pdf"}
+
+    # Unit level: empty citations strictly fail
+    unit_res = evaluate_citation_entailment_proxy([], expected_sources)
+    assert unit_res["supported"] is False
+    assert unit_res["reason"] == "no_citations_returned"
+
+    # Dataset evaluation level: no fallback to similarity heuristic
+    ds_path = tmp_path / "dataset.json"
+    ds_path.write_text(json.dumps(sample_dataset_items, ensure_ascii=False), encoding="utf-8")
+    res_path = tmp_path / "results.json"
+
+    # High confidence and matching sources, but NO citation objects
+    mock_resp = RAGQueryResponse(
+        answer="Встановлено 6 послідовних етапів перевірки.",
+        sources=["Керівництво_з_перевірки_документів.pdf"],
+        citations=[],  # Empty citations
+        confidence_score=0.95,
+        latency_seconds=0.1,
+        mode="grounded",
+    )
+
+    with patch("tools.evaluate_rag_suite.query_rag", new_callable=AsyncMock) as mock_query:
+        mock_query.return_value = mock_resp
+        summary = await evaluate_dataset(
+            dataset_path=str(ds_path),
+            results_path=str(res_path),
+        )
+
+        assert summary["citation_support_rate"] == 0.0
+        assert summary["citation_entailment_proxy"] == 0.0
+        res_item = summary["results"][0]
+        assert res_item["citation_entailment_proxy"] is False
+        assert "citation_entailment_failure" in str(res_item["failure_reason"])
+
+
+@pytest.mark.anyio
+async def test_old_or_incompatible_cache_is_rejected(tmp_path, sample_dataset_items):
+    """
+    Regression Test 9:
+    Proves that old or incompatible cache files are strictly rejected:
+    1. Missing evaluation metadata
+    2. Mismatched dataset hash
+    3. Mismatched model
+    4. Missing full_answer field (preview only)
+    5. Missing citations field
+    """
+    ds_path = tmp_path / "dataset.json"
+    ds_path.write_text(json.dumps(sample_dataset_items, ensure_ascii=False), encoding="utf-8")
+    expected_hash = compute_dataset_hash(sample_dataset_items)
+
+    # 1. Missing evaluation metadata entirely
+    legacy_cache = {"total_questions": 1, "results": [{"id": "T01", "answer_preview": "test"}]}
+    is_valid, reason = validate_cache(legacy_cache, sample_dataset_items)
+    assert is_valid is False
+    assert reason == "missing_evaluation_metadata"
+
+    res_path_legacy = tmp_path / "legacy.json"
+    res_path_legacy.write_text(json.dumps(legacy_cache), encoding="utf-8")
+    with pytest.raises(IncompatibleCacheError, match="missing_evaluation_metadata"):
+        await evaluate_dataset(
+            dataset_path=str(ds_path),
+            results_path=str(res_path_legacy),
+            reuse_existing_responses=True,
+        )
+
+    # 2. Mismatched dataset hash
+    mismatched_hash_cache = {
+        "evaluation_metadata": {
+            "dataset_hash": "different_hash_1234",
+            "model": "qwen3:4b-instruct",
+            "embed_model": "mxbai-embed-large:latest",
+            "collection_name": "rag_real_estate_active",
+        },
+        "results": [{"id": "T01", "question": sample_dataset_items[0]["question"], "full_answer": "ans", "citations": []}],
+    }
+    is_valid, reason = validate_cache(mismatched_hash_cache, sample_dataset_items)
+    assert is_valid is False
+    assert "dataset_hash_mismatch" in reason
+
+    # 3. Mismatched model
+    mismatched_model_cache = {
+        "evaluation_metadata": {
+            "dataset_hash": expected_hash,
+            "model": "mistral-7b-outdated",
+            "embed_model": "mxbai-embed-large:latest",
+            "collection_name": "rag_real_estate_active",
+        },
+        "results": [{"id": "T01", "question": sample_dataset_items[0]["question"], "full_answer": "ans", "citations": []}],
+    }
+    is_valid, reason = validate_cache(mismatched_model_cache, sample_dataset_items)
+    assert is_valid is False
+    assert "model_mismatch" in reason
+
+    # 4. Truncated answer only (missing full_answer)
+    truncated_only_cache = {
+        "evaluation_metadata": {
+            "dataset_hash": expected_hash,
+            "model": "qwen3:4b-instruct",
+            "embed_model": "mxbai-embed-large:latest",
+            "collection_name": "rag_real_estate_active",
+        },
+        "results": [
+            {
+                "id": "T01",
+                "question": sample_dataset_items[0]["question"],
+                "actual_mode": "grounded",
+                "answer_preview": "Truncated preview only",
+                "citations": [],
+            }
+        ],
+    }
+    is_valid, reason = validate_cache(truncated_only_cache, sample_dataset_items)
+    assert is_valid is False
+    assert "missing_full_answer" in reason
+
+    # 5. Missing citations field
+    missing_citations_cache = {
+        "evaluation_metadata": {
+            "dataset_hash": expected_hash,
+            "model": "qwen3:4b-instruct",
+            "embed_model": "mxbai-embed-large:latest",
+            "collection_name": "rag_real_estate_active",
+        },
+        "results": [
+            {
+                "id": "T01",
+                "question": sample_dataset_items[0]["question"],
+                "actual_mode": "grounded",
+                "full_answer": "Complete valid answer text",
+            }
+        ],
+    }
+    is_valid, reason = validate_cache(missing_citations_cache, sample_dataset_items)
+    assert is_valid is False
+    assert "missing_citations_field" in reason
+
+
+@pytest.mark.anyio
+async def test_explicit_valid_cache_reuse_works_correctly(tmp_path, sample_dataset_items):
+    """
+    Regression Test 10:
+    Proves that when explicit valid cache reuse is requested, compatible responses
+    are loaded without invoking live query_rag, and full answers/citations are evaluated.
+    """
+    ds_path = tmp_path / "dataset.json"
+    ds_path.write_text(json.dumps(sample_dataset_items, ensure_ascii=False), encoding="utf-8")
+    expected_hash = compute_dataset_hash(sample_dataset_items)
+
+    valid_cache = {
+        "total_questions": 1,
+        "run_mode": "cached_replay",
+        "is_cached_run": True,
+        "evaluation_metadata": {
+            "run_mode": "cached_replay",
+            "is_cached_run": True,
+            "dataset_hash": expected_hash,
+            "model": "qwen3:4b-instruct",
+            "embed_model": "mxbai-embed-large:latest",
+            "collection_name": "rag_real_estate_active",
+        },
+        "results": [
+            {
+                "id": "T01",
+                "category": "single_document",
+                "question": sample_dataset_items[0]["question"],
+                "actual_mode": "grounded",
+                "confidence_score": 0.84,
+                "latency_seconds": 0.22,
+                "actual_sources": ["Керівництво_з_перевірки_документів.pdf"],
+                "full_answer": "У регламенті встановлено 6 послідовних етапів перевірки.",
+                "answer_preview": "У регламенті встановлено 6 послідовних етапів перевірки.",
+                "citations": [
+                    {
+                        "document_name": "Керівництво_з_перевірки_документів.pdf",
+                        "chunk_id": "c1",
+                        "score": 0.84,
+                    }
+                ],
+            }
+        ],
+    }
+    res_path = tmp_path / "valid_cache.json"
+    res_path.write_text(json.dumps(valid_cache, ensure_ascii=False), encoding="utf-8")
+
+    with patch("tools.evaluate_rag_suite.query_rag", new_callable=AsyncMock) as mock_query:
+        summary = await evaluate_dataset(
+            dataset_path=str(ds_path),
+            results_path=str(res_path),
+            reuse_existing_responses=True,
+        )
+
+        assert mock_query.call_count == 0  # Reused from cache, no live inference
+        assert summary["run_mode"] == "cached_replay"
+        assert summary["is_cached_run"] is True
+        assert summary["results"][0]["claim_hit"] is True
+        assert summary["results"][0]["citation_entailment_proxy"] is True
+
+
+@pytest.mark.anyio
+async def test_fresh_and_cached_runs_are_labeled_separately(tmp_path, sample_dataset_items):
+    """
+    Regression Test 11:
+    Proves that fresh and cached runs are labeled distinctly in both top-level metadata
+    and per-item result entries.
+    """
+    ds_path = tmp_path / "dataset.json"
+    ds_path.write_text(json.dumps(sample_dataset_items, ensure_ascii=False), encoding="utf-8")
+    expected_hash = compute_dataset_hash(sample_dataset_items)
+
+    mock_resp = RAGQueryResponse(
+        answer="Встановлено 6 послідовних етапів перевірки.",
+        sources=["Керівництво_з_перевірки_документів.pdf"],
+        citations=[SourceCitation(document_name="Керівництво_з_перевірки_документів.pdf", score=0.85)],
+        confidence_score=0.85,
+        latency_seconds=0.1,
+        mode="grounded",
+    )
+
+    res_fresh_path = tmp_path / "fresh_results.json"
+    with patch("tools.evaluate_rag_suite.query_rag", new_callable=AsyncMock) as mock_query:
+        mock_query.return_value = mock_resp
+        fresh_summary = await evaluate_dataset(
+            dataset_path=str(ds_path),
+            results_path=str(res_fresh_path),
+            reuse_existing_responses=False,
+        )
+
+    # Validate fresh labels
+    assert fresh_summary["run_mode"] == "live_inference"
+    assert fresh_summary["is_cached_run"] is False
+    assert fresh_summary["evaluation_metadata"]["run_mode"] == "live_inference"
+    assert fresh_summary["evaluation_metadata"]["is_cached_run"] is False
+    assert fresh_summary["results"][0]["is_cached"] is False
+    assert fresh_summary["results"][0]["run_mode"] == "live_inference"
+
+    # Now replay the saved fresh results via explicit cache reuse
+    res_cached_path = tmp_path / "cached_replay.json"
+    with patch("tools.evaluate_rag_suite.query_rag", new_callable=AsyncMock) as mock_query:
+        cached_summary = await evaluate_dataset(
+            dataset_path=str(ds_path),
+            results_path=str(res_fresh_path),
+            reuse_existing_responses=True,
+        )
+
+    # Validate cached replay labels
+    assert cached_summary["run_mode"] == "cached_replay"
+    assert cached_summary["is_cached_run"] is True
+    assert cached_summary["evaluation_metadata"]["run_mode"] == "cached_replay"
+    assert cached_summary["evaluation_metadata"]["is_cached_run"] is True
+    assert cached_summary["results"][0]["is_cached"] is True
+    assert cached_summary["results"][0]["run_mode"] == "cached_replay"
