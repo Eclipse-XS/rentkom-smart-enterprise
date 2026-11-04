@@ -167,10 +167,10 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
 @router.post("/webhook-mock", response_model=TelegramResponseMock)
 async def telegram_webhook_mock(update: TelegramUpdateMock, db: Session = Depends(get_db)):
     """Mock testing endpoint for Unified Telegram Router (Demo/Test environment only)."""
-    if not settings.is_safe_demo_or_dev:
+    if not settings.is_test_webhook_permitted:
         raise HTTPException(
             status_code=403,
-            detail="Mock Telegram webhook is disabled in connected/production mode."
+            detail="Mock Telegram webhook is disabled in production mode or when ALLOW_TEST_WEBHOOK is false."
         )
     return await process_telegram_update(update, db=db)
 
@@ -390,6 +390,7 @@ async def complete_telegram_inbox(
 
 
 @router.post("/mock-dispatcher", response_model=TelegramMockDispatchResponse)
+@router.post("/dispatch-mock", response_model=TelegramMockDispatchResponse, include_in_schema=False)
 async def dispatch_telegram_mock(
     request: Request,
     dispatch_req: TelegramMockDispatchRequest,
@@ -397,10 +398,10 @@ async def dispatch_telegram_mock(
     x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
-    if not settings.is_safe_demo_or_dev:
+    if not settings.is_test_webhook_permitted:
         raise HTTPException(
             status_code=403,
-            detail="Mock Telegram Dispatcher is disabled in production/connected mode."
+            detail="Mock Telegram Dispatcher is disabled in production mode or when ALLOW_TEST_WEBHOOK is false."
         )
     bearer = _extract_bearer(authorization)
     internal_token = x_internal_token or bearer

@@ -52,5 +52,5 @@ def test_e2e_full_business_pipeline(client):
         assert patch_resp.json()["status"] == next_state
 
     # Verify Analytics Summary reflects the completed request
-    summary = client.get("/api/v1/analytics/summary").json()
+    summary = client.get("/api/v1/analytics/summary", headers=admin_headers).json()
     assert summary["requests_by_status"].get("COMPLETED", 0) >= 1

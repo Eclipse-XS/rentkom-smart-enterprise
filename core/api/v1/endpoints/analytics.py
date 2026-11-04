@@ -4,12 +4,17 @@ from sqlalchemy import func
 from core.database import get_db
 from core.models import ServiceRequest, CustomerFeedback, NotificationOutbox
 from core.schemas import AnalyticsSummary
+from core.security import require_internal_or_admin_auth, AuthenticatedActor
 
 router = APIRouter()
 
+
 @router.get("/summary", response_model=AnalyticsSummary)
-def get_analytics_summary(db: Session = Depends(get_db)):
-    """Provides high-level aggregated operational and customer satisfaction metrics for Grafana."""
+def get_analytics_summary(
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(require_internal_or_admin_auth),
+):
+    """Provides high-level aggregated operational and customer satisfaction metrics for Grafana (authenticated)."""
     # 1. Total Requests
     total_requests = db.query(ServiceRequest).count()
 

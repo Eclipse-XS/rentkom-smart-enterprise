@@ -21,4 +21,7 @@ datasources:
     type: marcusolsson-json-datasource
     access: proxy
     url: "http://${API_HOST}:8000/api/v1/analytics/summary"
-    jsonData: {}
+    jsonData:
+      httpHeaderName1: "X-Admin-Token"
+    secureJsonData:
+      httpHeaderValue1: "${ADMIN_API_KEY}"

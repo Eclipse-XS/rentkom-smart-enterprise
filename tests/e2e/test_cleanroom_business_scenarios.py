@@ -81,7 +81,7 @@ def test_scenario_a_api_postgres_outbox_mock_provider_grafana(db_session):
             assert it.status in ("MOCK_DELIVERED", "PROVIDER_ACCEPTED", "SENT")
             assert it.sent_at is not None
 
-    status, summary = api_get("/analytics/summary")
+    status, summary = api_get("/analytics/summary", headers={"X-Admin-Token": settings.ADMIN_API_KEY})
     assert status == 200
     assert summary["total_requests"] >= 1
 
