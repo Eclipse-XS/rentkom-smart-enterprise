@@ -61,7 +61,7 @@ services:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-lab4_real_estate}
       NOTIFICATION_PROVIDER: ${NOTIFICATION_PROVIDER:-mock}
       ENVIRONMENT: ${ENVIRONMENT:-demo}
-      OLLAMA_BASE_URL: http://${OLLAMA_HOST:-host.docker.internal}:11434
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://${OLLAMA_HOST:-ollama}:11434}
       QDRANT_HOST: ${DOCKER_QDRANT_HOST:-qdrant}
       QDRANT_PORT: 6333
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rentkom.lviv.ua}
@@ -226,6 +226,11 @@ services:
       - "${OLLAMA_BIND_IP:-127.0.0.1}:11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - rentkom-net
     profiles: ["full-ai"]
