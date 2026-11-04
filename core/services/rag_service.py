@@ -76,6 +76,7 @@ OUT_OF_DOMAIN_PATTERNS = [
 PROMPT_INJECTION_PATTERNS = [
     "ignore previous",
     "ignore all previous",
+    "system prompt",
     "delete table",
     "drop database",
     "викради пароль",
@@ -159,25 +160,49 @@ async def query_rag(
                     qdrant_url = f"http://{settings.QDRANT_HOST}:{settings.QDRANT_PORT}/collections/{target_collection}/points/search"
                     qdrant_resp = await client.post(
                         qdrant_url,
-                        json={"vector": vector, "limit": 4, "with_payload": True}
+                        json={"vector": vector, "limit": 12, "with_payload": True}
                     )
                     if qdrant_resp.status_code == 200:
                         retrieval_succeeded = True
                         results = qdrant_resp.json().get("result", [])
+
+                        qualifying_points = []
                         for pt in results:
                             score = float(pt.get("score", 0.0))
                             if score > max_score:
                                 max_score = score
-                            if score < settings.RAG_MIN_SIMILARITY:
-                                continue
+                            if score >= settings.RAG_MIN_SIMILARITY:
+                                qualifying_points.append(pt)
+
+                        # Source-diversified selection (RAG-01): round-robin across distinct documents
+                        by_doc: Dict[str, List[Any]] = {}
+                        for pt in qualifying_points:
+                            payload = pt.get("payload", {})
+                            doc_name = payload.get("document_name") or payload.get("source") or ""
+                            if doc_name:
+                                by_doc.setdefault(doc_name, []).append(pt)
+
+                        selected_points = []
+                        max_context_chunks = 6
+                        doc_queues = [list(pts) for pts in by_doc.values()]
+                        while doc_queues and len(selected_points) < max_context_chunks:
+                            next_queues = []
+                            for q in doc_queues:
+                                if q and len(selected_points) < max_context_chunks:
+                                    selected_points.append(q.pop(0))
+                                    if q:
+                                        next_queues.append(q)
+                            doc_queues = next_queues
+
+                        if not selected_points:
+                            selected_points = qualifying_points[:max_context_chunks]
+
+                        for pt in selected_points:
                             payload = pt.get("payload", {})
                             chunk_id = str(pt.get("id", ""))
                             raw_text = payload.get("content") or payload.get("text") or ""
-                            doc_name = (
-                                payload.get("document_name")
-                                or payload.get("source")
-                                or ""
-                            )
+                            doc_name = payload.get("document_name") or payload.get("source") or ""
+                            score = float(pt.get("score", 0.0))
                             if raw_text and doc_name:
                                 clean_text = sanitize_retrieved_chunk(raw_text)
                                 retrieved_chunks.append(clean_text)
