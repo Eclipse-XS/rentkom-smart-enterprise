@@ -5,7 +5,7 @@ Covers:
 - SEC-T11: compose.yaml binds postgres to 127.0.0.1 by default.
 - SEC-T12: compose.yaml binds qdrant to 127.0.0.1 by default.
 - SEC-T13: compose.yaml binds ollama to 127.0.0.1 by default.
-- SEC-T14: compose.yaml specifies n8n image >= 1.76.1.
+- SEC-T14: compose.yaml builds the verified n8n 2.46.5 Brotli remediation.
 - SEC-T15: compose.yaml sets N8N_BLOCK_ENV_ACCESS_IN_NODE=true.
 - SEC-T16: Unauthenticated request to /api/v1/analytics/summary returns 401/403.
 - SEC-T17: Authenticated administrator can access /api/v1/analytics/summary.
@@ -20,6 +20,7 @@ from core.config import settings
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 COMPOSE_FILE = ROOT_DIR / "compose.yaml"
 DOCKERFILE = ROOT_DIR / "Dockerfile"
+N8N_DOCKERFILE = ROOT_DIR / "Dockerfile.n8n"
 
 
 def _read_compose_text() -> str:
@@ -80,23 +81,19 @@ def test_sec_t13_compose_binds_ollama_to_127_0_0_1_by_default():
 
 
 def test_sec_t14_compose_pins_advisory_patched_n8n_image():
-    """SEC-T14: n8n is patched for CVE-2025-68613/CVE-2026-27577 and digest-pinned."""
+    """SEC-T14: n8n app and native Brotli fixes are reproducibly pinned."""
     text = _read_compose_text()
     n8n_match = re.search(r"n8n:\s*\n(.*?)(?=\n\s\s[a-zA-Z0-9_-]+:|$)", text, re.DOTALL)
     assert n8n_match, "n8n service definition not found in compose.yaml"
     n8n_block = n8n_match.group(1)
 
-    image_match = re.search(
-        r"image:\s*n8nio/n8n:([0-9]+\.[0-9]+\.[0-9]+)@sha256:([0-9a-f]{64})",
-        n8n_block,
-    )
-    assert image_match, f"n8n image version pattern not found in {n8n_block}"
-    ver_str = image_match.group(1)
-    parts = [int(p) for p in ver_str.split(".")]
-    assert len(parts) == 3
-    version = tuple(parts)
-    patched = version >= (2, 10, 1) or ((1, 123, 22) <= version < (2, 0, 0))
-    assert patched, f"n8n version {ver_str} is affected by CVE-2026-27577"
+    assert "dockerfile: Dockerfile.n8n" in n8n_block
+    assert "image: rentkom/n8n:2.46.5-brotli1.2.1" in n8n_block
+    dockerfile = N8N_DOCKERFILE.read_text(encoding="utf-8")
+    assert "n8nio/n8n:2.46.5@sha256:2c99b0700dc0ebc89ff56d045499e0a7e16619d96a1360bc0de0b3750fbdcc1a" in dockerfile
+    assert "brotli-libs-1.2.1-r0.apk" in dockerfile
+    assert "rm -rf /sbin/apk /tmp/apk-libs /tmp/brotli-libs.apk" in dockerfile
+    assert re.search(r"^USER node\s*$", dockerfile, re.MULTILINE)
 
 
 def test_sec_t15_compose_sets_n8n_block_env_access_in_node_true():

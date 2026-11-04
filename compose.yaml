@@ -176,7 +176,10 @@ services:
   # 5. n8n Automation Engine (Connected Mode)
   # ----------------------------------------------------------------------------
   n8n:
-    image: n8nio/n8n:2.46.5@sha256:2c99b0700dc0ebc89ff56d045499e0a7e16619d96a1360bc0de0b3750fbdcc1a
+    build:
+      context: .
+      dockerfile: Dockerfile.n8n
+    image: rentkom/n8n:2.46.5-brotli1.2.1
     container_name: rentkom-n8n
     restart: unless-stopped
     depends_on:

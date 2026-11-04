@@ -11,7 +11,8 @@
   - Qdrant container (`127.0.0.1:6333`, 32 indexed points)
   - Ollama host daemon (`127.0.0.1:11434`, `mxbai-embed-large:latest` + `qwen3:4b-instruct`)
 **Automation Runtime:**
-  - n8n container (`127.0.0.1:5678`, workflow `Rentkom Unified Telegram Router` active)
+  - Current release acceptance: isolated hardened n8n 2.46.5 container (`127.0.0.1:55678`) with the Unified Telegram Router activated
+  - The older `127.0.0.1:5678` four-test run below is historical regression evidence, not the current release acceptance run
 
 ---
 
@@ -25,8 +26,8 @@ We strictly distinguish between the **Local Integrated Stack** (where all option
 |---|---|---:|---:|---:|---:|---:|
 | **Unit, Security & Safety Suite** | `pytest tests/unit -v --tb=short` | `60` | **`60`** | `0` | `0` | `1.79s` |
 | **SMTP Transport & Telegram Connected Contract** | `pytest tests/integration/test_smtp_delivery.py tests/integration/test_telegram_connected_mode_contract.py -v --tb=short` | `20` | **`20`** | `0` | `0` | `4.36s` |
-| **Live n8n Unified Router Suite** | `pytest tests/integration/test_n8n_unified_router_live.py -v --tb=short` | `4` | **`4`** | `0` | `0` | `61.04s` |
-| **Full Pytest Suite with disposable PostgreSQL 16** | `pytest -q` | `194` | **`190`** | **`4`** | `0` | `220.82s` |
+| **Historical live n8n router suite** | `pytest tests/integration/test_n8n_unified_router_live.py -v --tb=short` | `4` | **`4`** | `0` | `0` | `61.04s` |
+| **Full Pytest Suite with disposable PostgreSQL 16** | `pytest -q -rs --tb=short` | `194` | **`190`** | **`4`** | `0` | `235.02s` |
 | **Fixed regression subset** | targeted SQL/n8n/E2E tests | `19` | **`19`** | `0` | `0` | `72.88s` |
 | **Disposable PostgreSQL 16 Integration + E2E** | `pytest -q tests/integration tests/e2e` | `115` | **`111`** | **`4`** | `0` | `425.66s` |
 | **PostgreSQL SQL Bootstrap & Idempotent Migration** | `psql -v ON_ERROR_STOP=1 -f init_db.sql` & `2x schema_v2.sql` | `3 runs` | **`3`** | `0` | `0` | `1.8s` |
@@ -82,9 +83,10 @@ Executed via `tools/evaluate_rag_suite.py` against live Qdrant (32 indexed point
 ```
 
 ### Analysis of Factual Grounding & Limitations
-- **Retrieval Hit Rate (Recall@K = 85.0%)**: 17 of 20 in-domain questions retrieved their authoritative primary documents.
-- **Unsupported Answer Rate (16.67%, 5 / 30)**: Questions `Q11, Q13, Q14, Q15, Q23` lacked complete qualifying citation coverage across required documents (primarily due to the top-K=3 retrieval budget on multi-document queries).
-- **Citation Support Rate (73.68%, 14 / 19)**: 14 of 19 grounded responses carried qualifying citations with cosine similarity $\ge 0.55$ covering all expected ground-truth documents.
+- **Recall@K = 95.0%**: dataset-level expected-source recall in the retained result.
+- **Multi-document full coverage = 80.0%**: improved from the prior 20.0% result.
+- **Citation support/entailment proxy = 94.74%**: a heuristic source-matching proxy, not proof that every generated claim is factually entailed.
+- **Latency trade-off**: p95 increased from `34.489s` to `74.635s` while retrieval and citation proxies improved.
 - **Abstention Accuracy (100.0%, 10 / 10)**: 5 out-of-domain questions and 5 prompt injection attacks were cleanly rejected.
 - **Methodological Disclaimer**: Passing 5 static prompt injection queries does not constitute complete defense against novel multi-turn, token-smuggling, or zero-day jailbreak variants.
 
@@ -95,6 +97,26 @@ Executed via `tools/evaluate_rag_suite.py` against live Qdrant (32 indexed point
 We explicitly state that:
 1. **SMTP Delivery**: Verified using real socket-level TCP connections against an in-process local SMTP server (`test_smtp_delivery.py`), covering STARTTLS handshakes, authentication, recipient errors (`550`, `451`), and network timeouts (`504`). It was **not** tested against an external enterprise SMTP server over the public internet to prevent unsolicited test emails.
 2. **Telegram Bot Dispatch**: Verified using contract tests against mock dispatchers, local database lease recovery, and simulated upstream responses (`200`, `429`, `503`, timeouts). It was **not** connected to `api.telegram.org` with a live commercial production bot token to prevent live messaging side-effects.
+
+### 3.1 Current Release n8n Runtime Acceptance
+
+The current acceptance used actual isolated containers for n8n 2.46.5, FastAPI and disposable PostgreSQL. Credentials were imported into the running n8n container. Eight workflows imported and the Unified Telegram Router was activated.
+
+| Execution ID | Input/path | HTTP/runtime result | Database/downstream evidence |
+|---:|---|---|---|
+| `1` | `/start` | success; greeting and finalize nodes ran | one inbox row, `COMPLETED` |
+| `2` | buying | success; buyer route and finalize ran | one inbox row, `COMPLETED` |
+| `3` | renting | success; landlord route and finalize ran | one inbox row, `COMPLETED` |
+| `4` | RAG | success; RAG HTTP node and finalize ran | cited response persisted, `COMPLETED` |
+| `5` | duplicate of execution 1 | success; duplicate-drop node ran; no greeting/finalize | original `update_id` count remained one |
+| `6` | real-ingress downstream failure | execution status `error`; finalize did not run | row remained `PROCESSING`, `completed_at` null |
+| `7` | duplicate `/start` after recreating the container from the final exact image | HTTP 200; execution success | confirms startup, retained imports/credentials and execution on image ID `sha256:7e53d94c...09c2fcb` |
+
+Authentication evidence: missing and invalid webhook secrets returned HTTP 403; the valid synthetic secret returned HTTP 200. The n8n-to-FastAPI internal credential authenticated successfully. Logs and execution data showed no node-expression, credential-resolution or HTTP-authorization error; execution 6 contains only the intentional missing-provider-credential failure.
+
+- `LIVE_N8N_EXECUTION: PASS`
+- `TELEGRAM_PROVIDER_CONTRACT: PASS`
+- `EXTERNAL_TELEGRAM_DELIVERY: BLOCKED` because no customer-owned Telegram token was supplied
 
 ---
 

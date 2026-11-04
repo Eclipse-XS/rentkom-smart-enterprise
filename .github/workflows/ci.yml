@@ -43,6 +43,11 @@ jobs:
           docker compose --profile full-ai config --quiet
           docker compose --profile dedicated-worker config --quiet
 
+      - name: Build and Scan Hardened n8n Image
+        run: |
+          docker build --file Dockerfile.n8n --tag rentkom/n8n:ci .
+          docker run --rm --volume /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2 image --scanners vuln --severity CRITICAL --exit-code 1 --skip-version-check rentkom/n8n:ci
+
   unit-and-security-tests:
     name: Unit, Security & SMTP Transport Tests
     runs-on: ubuntu-latest

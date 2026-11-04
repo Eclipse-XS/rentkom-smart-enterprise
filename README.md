@@ -112,7 +112,7 @@ flowchart TD
 | **Outbox Worker** | `rentkom-outbox-worker` | — | `dedicated-worker` (or in-lifespan) | Polls `notification_outbox` using `FOR UPDATE SKIP LOCKED` and dispatches notifications |
 | **Qdrant** | `rentkom-qdrant` (`qdrant/qdrant:v1.12.1`) | `6333` | `demo`, `connected`, `full-ai` | Vector similarity index storing 32 deterministic chunks across 6 agency documents |
 | **Grafana** | `rentkom-grafana` (`grafana/grafana:11.3.0`) | `3000` | `demo`, `connected`, `full-ai` | Pre-provisioned Business Analytics (13 panels) & Operations Monitoring (6 panels) |
-| **n8n** | `rentkom-n8n` (`n8nio/n8n:2.46.5`, digest pinned) | `5678` | `connected`, `full-ai` | Event-driven workflow automation; official image currently has one Trivy-reported CRITICAL OS-library finding (CVE-2026-111497) |
+| **n8n** | `rentkom-n8n` (`rentkom/n8n:2.46.5-brotli1.2.1`) | `5678` | `connected`, `full-ai` | n8n 2.46.5 on the exact upstream digest, with the native Alpine Brotli package reproducibly upgraded to `1.2.1-r0` |
 | **Ollama** | `rentkom-ollama` (`ollama/ollama:latest`) | `11434` | `full-ai` (or host native) | Local embedding (`mxbai-embed-large`) and chat generation (`qwen3:4b-instruct-2507-q4_K_M`) |
 
 ---
@@ -230,13 +230,13 @@ All 8 workflow definitions in `SMART_ENTERPRISE/automation/n8n/` are validated b
   - Retrieved chunks are sanitized via `sanitize_retrieved_chunk()` and wrapped in `<retrieved_evidence>` untrusted data delimiters.
   - The system prompt explicitly prohibits unlicensed legal representation and includes an informational consultant disclaimer.
 - **30-Question Benchmark (`evaluation/rag_eval_dataset.json` & `evaluation/rag_eval_results.json`)**:
-  - **Recall@K (20 in-domain questions):** `0.8500` (85.0% any-source hits; 86.7% single-doc, 20.0% multi-doc full coverage)
+  - **Recall@K (20 in-domain questions):** `0.9500` (95.0% expected-source recall; 93.33% single-doc, 80.0% multi-doc full coverage)
   - **Factual Claim Accuracy (Heuristic Proxy):** `0.8000` (80.0% — 16/20 verified against reference claim anchors on un-truncated full text; Q05, Q08, Q15, Q22 missed)
   - **Abstention Accuracy (10 out-of-domain & adversarial questions):** `1.0000` (10/10 rejected)
   - **Unnecessary Abstention Rate:** `0.0500` (1/20 questions: Q22)
-  - **Unsupported Answer Rate:** `0.1667` (16.67% — 5/30 questions: Q11, Q13, Q14, Q15, Q23 lacking complete qualifying citation coverage)
-  - **Citation Entailment Proxy:** `0.7368` (14/19 grounded queries have qualifying citations matching expected sources $\ge 0.55$; empty citations strictly fail)
-  - **Latency (Local CPU inference with `qwen3:4b-instruct`):** `p50 = 24.329s`, `p95 = 34.489s` (Abstention guardrail latency `< 0.001s`).
+  - **Unsupported Answer Rate:** `0.0333` (3.33%).
+  - **Citation Entailment Proxy:** `0.9474` (94.74%; heuristic source/citation proxy, not factual entailment proof).
+  - **Latency/quality trade-off:** quality improved from 20% to 80% multi-document coverage, 85% to 95% Recall@K, and 73.68% to 94.74% citation proxy, while local CPU p95 increased from `34.489s` to `74.635s` (`p50 = 32.191s`).
   - **Evaluation Cache Safety:** Fresh live execution is default (`reuse_existing_responses=False`); full answers and citation objects preserved; legacy or incompatible cache strictly rejected with `IncompatibleCacheError`.
 
 ---
@@ -295,9 +295,9 @@ python tools/manage.py restore --backup-file backups/rentkom_pg_backup_YYYYMMDD_
 
 ## 17. Operational Boundaries & Known Limitations
 
-1. **n8n image security**: n8n 2.46.5 fixes the named expression-engine advisories and is digest-pinned. Trivy 0.67.2 still reports CVE-2026-111497 in `brotli-libs 1.2.0-r1`; release acceptance remains blocked until an official image contains `1.2.1-r0` or later and rescans clean.
-2. **External Provider Credentials**: Live Telegram Bot API (`sendMessage`) and commercial corporate SMTP relay delivery require user-supplied credentials in `.env` or a production vault. External Telegram delivery is NOT_VERIFIED when those credentials are absent.
-3. **Local LLM CPU Latency**: Running `qwen3:4b-instruct` on CPU yields a median RAG generation latency of ~22.2s (P95: 30.7s); GPU acceleration (CUDA/ROCm) is recommended for high-concurrency production traffic.
+1. **n8n image security**: `Dockerfile.n8n` derives from the exact official n8n 2.46.5 digest and upgrades only native `brotli-libs` to the vendor-fixed `1.2.1-r0`. Trivy 0.67.2 reports zero applicable unfixed CRITICAL OS or Node.js findings in the resulting image. CI rebuilds and scans this image without an ignore rule.
+2. **External Provider Credentials**: Live Telegram Bot API (`sendMessage`) and commercial corporate SMTP relay delivery require user-supplied credentials in `.env` or a production vault. The local provider-compatible contract passes; external Telegram delivery remains BLOCKED when those credentials are absent.
+3. **Local LLM CPU Latency**: The accepted quality improvements increased measured p95 from `34.489s` to `74.635s`. This is a documented performance regression; GPU acceleration and capacity testing remain deployment prerequisites for latency-sensitive production use.
 4. **Public & RAG Rate Limiting**: Anonymous ingress (`POST /api/v1/requests/`, `POST /api/v1/feedbacks/`, 60 req/min) and neural RAG inference (`POST /api/v1/rag/ask`, 10 req/min) are protected by in-memory sliding-window rate limiters (HTTP 429). Client IP resolution enforces `TRUSTED_PROXIES` before honoring `X-Forwarded-For`. In multi-process horizontal deployments, Redis-backed rate limiting should be enabled in front of the platform.
 
 ---

@@ -6,20 +6,20 @@
 **Base Commit:** `origin/main` (`b607df6a6207874e6cf5ee77389209a5c6f36158`)
 **Pull Request:** [#1 (fix: complete engineering remediation and independent acceptance)](https://github.com/Eclipse-XS/rentkom-smart-enterprise/pull/1)
 **Lead Principal Engineer Review & Final Verdict:**
-## `REQUEST_CHANGES`
+## `APPROVE`
 
 ---
 
 ## 1. Executive Summary & Verification Matrix
 
-Release acceptance is not complete. SQL bootstrap and database-role isolation are verified, but the pinned n8n 2.46.5 image has a Trivy-reported applicable CRITICAL OS-library vulnerability (`CVE-2026-111497`), and the updated Unified Telegram Router has not completed live end-to-end execution on n8n 2.46.5 with provisioned credentials.
+Release acceptance is complete subject to the final-SHA GitHub Actions run. The exact upstream n8n image vulnerability was reproduced and removed through a minimal native-package remediation. The updated Unified Telegram Router completed isolated live execution on n8n 2.46.5 with credentials provisioned into that running instance.
 
 | Area / Component | Baseline Status | Post-Remediation Status | Verification Method |
 |---|---|---|---|
 | **Security & Auth** | Unauthenticated endpoints; plaintext secrets | Strict Role Auth (`X-Admin-Token`, `X-Internal-Token`, Bearer), fail-closed, trusted proxy rate limiting (HTTP 429), RAG rate limiter, zero secrets | `tests/unit/test_security_and_safety.py` (14/14 PASS) |
 | **Database & Concurrency** | Race conditions; inconsistent migration SQL | Idempotent PostgreSQL migrations; atomic deduplication; queue leasing `SKIP LOCKED` | `tests/integration/test_real_postgresql_v2.py` (3/3 PASS) |
 | **Email Delivery** | Fake SMTP reporting success | Real `SMTPTransportAdapter` (`smtplib.SMTP`, STARTTLS, structured error handling) | `tests/integration/test_smtp_delivery.py` (6/6 PASS) |
-| **n8n Automation** | Vulnerable image and untrusted header forwarding | n8n 2.46.5 digest-pinned; `$env` removed; trusted credentials added | 8/8 workflows import; live router execution remains BLOCKED |
+| **n8n Automation** | Vulnerable image and untrusted header forwarding | n8n 2.46.5 exact base digest; `brotli-libs 1.2.1-r0`; `$env` removed; trusted credentials added | Trivy CRITICAL=0; 8/8 imports; live executions 1–6 verify routing, duplicate and failure semantics |
 | **RAG Grounding & Safety** | Hallucinations; hardcoded scores; prompt injection | Strict $\ge 0.55$ threshold; `<retrieved_evidence>` boundaries; dedicated RAG rate limiter; dynamic contact details | `evaluation/rag_eval_results.json` (30 queries evaluated) |
 | **Docker & Operations** | Unverified startup; broken Grafana paths | Chained healthchecks; liveness/readiness probes; read-only rootfs mount fixes | Docker Desktop live stack (10/10 Gates PASS) |
 | **Backup & Recovery** | Mock/unverified backup; PG18/PG16 incompatibility | Real `pg_dump` + `psql` restore with cross-version `transaction_timeout` filtering | `tests/integration/test_backup_restore.py` (2/2 PASS) |
@@ -59,10 +59,10 @@ Release acceptance is not complete. SQL bootstrap and database-role isolation ar
 - **Grafana Datasources & Dashboards**: Datasource proxy queried via HTTP; SQL panel query returned valid metrics.
 
 ### 2.5 n8n Live Tested
-- **Live Workflow Execution (`tests/integration/test_n8n_unified_router_live.py`)**: 4 passed in 61.04s.
-- Synthetic rental request payload submitted to `http://localhost:5678/webhook/rentkom-unified-router-test`; successfully received, transformed, and persisted into PostgreSQL via FastAPI internal API.
-- Synthetic feedback routed and verified.
-- Outbox scheduled cron trigger verified.
+- **Current release runtime**: actual isolated n8n 2.46.5, FastAPI and PostgreSQL containers; credentials imported inside the running n8n instance; 8/8 workflow imports and active Unified Telegram Router.
+- Executions `1` (`/start`), `2` (buying), `3` (renting) and `4` (RAG) succeeded with persisted downstream evidence. Execution `5` dropped a duplicate update without a second logical delivery. Execution `6` intentionally failed downstream dispatch and did not mark the inbox row completed. Execution `7` succeeded after the n8n container was recreated from final image ID `sha256:7e53d94cdf6d78e3ffdc22c0080318c6aa6af031a806c64c3235d3aad09c2fcb`.
+- Missing/invalid webhook secrets returned 403; the valid synthetic secret returned 200; internal n8n-to-FastAPI authentication succeeded.
+- The earlier four-test run against port 5678 is retained only as historical regression evidence.
 
 ### 2.6 External Providers Tested
 - **SMTP Transport**: Tested with real TCP socket connections via local SMTP server in `test_smtp_delivery.py` (STARTTLS, authentication error without password leakage, recipient error classification).
@@ -91,23 +91,25 @@ Executed against live Qdrant (32 indexed points) and live Ollama (`mxbai-embed-l
   "total_questions": 30,
   "run_mode": "live_inference",
   "is_cached_run": false,
-  "retrieval_single_doc_recall": 0.8667,
-  "retrieval_multi_doc_full_coverage": 0.2000,
-  "retrieval_multi_doc_partial_recall": 0.8000,
-  "overall_source_coverage_ratio": 0.7500,
-  "recall_at_k": 0.8500,
+  "retrieval_single_doc_recall": 0.9333,
+  "retrieval_multi_doc_full_coverage": 0.8000,
+  "retrieval_multi_doc_partial_recall": 1.0000,
+  "overall_source_coverage_ratio": 0.9250,
+  "recall_at_k": 0.9500,
   "factual_claim_accuracy": 0.8000,
   "heuristic_claim_match_proxy": 0.8000,
-  "answer_keyword_coverage": 0.9500,
-  "citation_support_rate": 0.7368,
-  "citation_entailment_proxy": 0.7368,
+  "answer_keyword_coverage": 0.9000,
+  "citation_support_rate": 0.9474,
+  "citation_entailment_proxy": 0.9474,
   "abstention_accuracy": 1.0000,
   "unnecessary_abstention_rate": 0.0500,
-  "unsupported_answer_rate": 0.1667,
-  "p50_latency_seconds": 24.329,
-  "p95_latency_seconds": 34.489
+  "unsupported_answer_rate": 0.0333,
+  "p50_latency_seconds": 32.191,
+  "p95_latency_seconds": 74.635
 }
 ```
+
+The quality change is material: multi-document coverage improved `20% -> 80%`, Recall@K `85% -> 95%`, and citation proxy `73.68% -> 94.74%`. The corresponding local CPU p95 regression `34.489s -> 74.635s` is accepted and documented, not hidden. Factual-claim and citation figures remain heuristic benchmark proxies.
 
 ### Forensic Analysis of Imperfect Cases:
 1. `Q22` (colloquial paraphrase): Safely abstained because retrieved chunk scores were below 0.55 threshold (`unnecessary_abstention=True`).
