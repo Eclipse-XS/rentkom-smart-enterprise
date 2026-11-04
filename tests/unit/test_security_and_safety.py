@@ -214,6 +214,96 @@ def test_public_endpoint_rate_limiting(client, monkeypatch):
     public_rate_limiter.reset()
 
 
+def test_x_forwarded_for_spoofing_prevention(client, monkeypatch):
+    """
+    Verify that spoofing X-Forwarded-For headers from untrusted clients DOES NOT bypass rate limits.
+    Forwarded headers are ONLY trusted when the direct peer is explicitly registered in TRUSTED_PROXIES.
+    """
+    from core.security import public_rate_limiter
+    public_rate_limiter.reset()
+    monkeypatch.setattr(public_rate_limiter, "rpm", 2)
+    monkeypatch.setattr(settings, "TRUSTED_PROXIES", [])  # No trusted proxies by default
+
+    req_payload = {
+        "full_name": "Тестовий Клієнт",
+        "phone": "+380501234567",
+        "email": "test.client@example.com",
+        "request_purpose": "Хочу купити",
+        "property_type": "Квартира",
+        "property_location": "Личаківський р-н",
+        "consultation_date": "2026-11-15",
+        "source_channel": "REST_API",
+    }
+
+    # Attacker attempts to rotate X-Forwarded-For to bypass rate limiter
+    r1 = client.post("/api/v1/requests/", json=req_payload, headers={"X-Forwarded-For": "1.1.1.1"})
+    assert r1.status_code == 201
+
+    r2 = client.post("/api/v1/requests/", json=req_payload, headers={"X-Forwarded-For": "2.2.2.2"})
+    assert r2.status_code == 201
+
+    # 3rd request from same client with different spoofed IP must still be blocked
+    r3 = client.post("/api/v1/requests/", json=req_payload, headers={"X-Forwarded-For": "3.3.3.3"})
+    assert r3.status_code == 429
+    assert "Rate limit exceeded" in r3.json()["detail"]
+
+    # When client is behind an explicitly trusted proxy, X-Forwarded-For is respected
+    public_rate_limiter.reset()
+    # TestClient direct peer host is "testclient"
+    monkeypatch.setattr(settings, "TRUSTED_PROXIES", ["testclient", "127.0.0.1"])
+    r_proxy1 = client.post("/api/v1/requests/", json=req_payload, headers={"X-Forwarded-For": "203.0.113.10"})
+    r_proxy2 = client.post("/api/v1/requests/", json=req_payload, headers={"X-Forwarded-For": "203.0.113.20"})
+    assert r_proxy1.status_code == 201
+    assert r_proxy2.status_code == 201
+
+    public_rate_limiter.reset()
+
+
+def test_rag_endpoint_rate_limiting(client, monkeypatch):
+    """
+    Verify that POST /api/v1/rag/ask is protected by independent, strict rate limiting (HTTP 429).
+    Also checks Retry-After header and spoofing resistance.
+    """
+    from core.security import rag_rate_limiter
+    from core.schemas import RAGQueryResponse
+    rag_rate_limiter.reset()
+    monkeypatch.setattr(rag_rate_limiter, "rpm", 2)
+    monkeypatch.setattr(settings, "TRUSTED_PROXIES", [])
+
+    async def fake_query_rag(q, history=None):
+        return RAGQueryResponse(
+            mode="grounded",
+            confidence_score=0.85,
+            answer="Відповідь для тестування",
+            sources=["Тестовий_документ.pdf"],
+            citations=[],
+            latency_seconds=0.1,
+        )
+
+    from core.api.v1.endpoints import rag as rag_endpoint
+    monkeypatch.setattr(rag_endpoint, "query_rag", fake_query_rag)
+
+    rag_payload = {"question": "Які послуги надає агентство?"}
+
+    # 2 requests succeed
+    r1 = client.post("/api/v1/rag/ask", json=rag_payload)
+    assert r1.status_code == 200
+    r2 = client.post("/api/v1/rag/ask", json=rag_payload)
+    assert r2.status_code == 200
+
+    # 3rd request is blocked with 429 and Retry-After
+    r3 = client.post("/api/v1/rag/ask", json=rag_payload)
+    assert r3.status_code == 429
+    assert "RAG rate limit exceeded" in r3.json()["detail"]
+    assert "retry-after" in r3.headers
+
+    # Spoofing X-Forwarded-For does not bypass RAG limiter
+    r_spoof = client.post("/api/v1/rag/ask", json=rag_payload, headers={"X-Forwarded-For": "8.8.8.8"})
+    assert r_spoof.status_code == 429
+
+    rag_rate_limiter.reset()
+
+
 def test_rag_configurable_contact_details(monkeypatch):
     """Verify that fallback/abstention contact details in RAG service are dynamically configurable."""
     from core.services.rag_service import get_abstention_response, get_fallback_response

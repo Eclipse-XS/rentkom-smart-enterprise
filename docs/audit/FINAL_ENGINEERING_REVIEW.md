@@ -16,33 +16,33 @@ All 15 defects identified in the baseline forensic audit (`BASELINE_FINDINGS.md`
 
 | Area / Component | Baseline Status | Post-Remediation Status | Verification Method |
 |---|---|---|---|
-| **Security & Auth** | Unauthenticated endpoints; plaintext secrets | Strict Role Auth (`X-Admin-Token`, `X-Internal-Token`, Bearer), fail-closed, rate limiting (HTTP 429), zero secrets | `tests/unit/test_security_and_safety.py` (12/12 PASS) |
+| **Security & Auth** | Unauthenticated endpoints; plaintext secrets | Strict Role Auth (`X-Admin-Token`, `X-Internal-Token`, Bearer), fail-closed, trusted proxy rate limiting (HTTP 429), RAG rate limiter, zero secrets | `tests/unit/test_security_and_safety.py` (14/14 PASS) |
 | **Database & Concurrency** | Race conditions; inconsistent migration SQL | Idempotent PostgreSQL migrations; atomic deduplication; queue leasing `SKIP LOCKED` | `tests/integration/test_real_postgresql_v2.py` (3/3 PASS) |
 | **Email Delivery** | Fake SMTP reporting success | Real `SMTPTransportAdapter` (`smtplib.SMTP`, STARTTLS, structured error handling) | `tests/integration/test_smtp_delivery.py` (6/6 PASS) |
 | **n8n Automation** | `127.0.0.1` container breaks; competing routers | Single active router; parameterized `$env.BUSINESS_API_URL`; offline webhook ingress | `tests/integration/test_n8n_unified_router_live.py` (4/4 PASS) |
-| **RAG Grounding & Safety** | Hallucinations; hardcoded scores; prompt injection | Strict $\ge 0.55$ threshold; `<retrieved_evidence>` boundaries; dynamic contact details | `evaluation/rag_eval_results.json` (30 queries evaluated) |
+| **RAG Grounding & Safety** | Hallucinations; hardcoded scores; prompt injection | Strict $\ge 0.55$ threshold; `<retrieved_evidence>` boundaries; dedicated RAG rate limiter; dynamic contact details | `evaluation/rag_eval_results.json` (30 queries evaluated) |
 | **Docker & Operations** | Unverified startup; broken Grafana paths | Chained healthchecks; liveness/readiness probes; read-only rootfs mount fixes | Docker Desktop live stack (10/10 Gates PASS) |
 | **Backup & Recovery** | Mock/unverified backup; PG18/PG16 incompatibility | Real `pg_dump` + `psql` restore with cross-version `transaction_timeout` filtering | `tests/integration/test_backup_restore.py` (2/2 PASS) |
-| **Test Coverage** | 17 unit tests | **114 automated tests locally (100% PASS), 3-stage GitHub Actions CI (100% PASS)** | Pytest local & remote CI runs |
+| **Test Coverage** | 17 unit tests | **54 Unit tests, 20 Contract tests, 3-stage GitHub Actions CI (100% PASS)** | Pytest local & remote CI runs |
 
 ---
 
 ## 2. Categorical Implementation & Verification Breakdown
 
 ### 2.1 Code Implemented
-- **Security & Safety (`core/security.py`, `core/config.py`)**: Implemented timing-safe token validation (`X-Admin-Token`, `X-Internal-Token`), production configuration checks, Telegram webhook secret enforcement, in-memory sliding-window public rate limiter (`InMemoryRateLimiter`, HTTP 429), and test database safety guards (`assert_safe_test_database()`).
+- **Security & Safety (`core/security.py`, `core/config.py`)**: Implemented timing-safe token validation (`X-Admin-Token`, `X-Internal-Token`), production configuration checks, Telegram webhook secret enforcement, in-memory sliding-window public rate limiter (`InMemoryRateLimiter`, HTTP 429), dedicated RAG rate limiter (`check_rag_rate_limit`, 10 req/min), trusted proxy `X-Forwarded-For` verification (`TRUSTED_PROXIES`), and test database safety guards (`assert_safe_test_database()`).
 - **Application Core (`core/main.py`, `core/database.py`)**: Added `/api/v1/health/live` and `/api/v1/health/ready` probes; implemented SQLAlchemy 2.x dialect URI normalization (`postgresql+psycopg2://`).
 - **Business Logic (`core/services/request_service.py`)**: Savepoint-based atomic customer deduplication; strict status transition lifecycle with actor attribution.
 - **Outbox & Transport (`core/services/outbox_service.py`)**: Integrated `SMTPTransportAdapter` with real socket-level SMTP transport, STARTTLS encryption, and discrete error classification.
 - **Telegram Router (`core/services/telegram_idempotency.py`)**: Database-clock lease expiration (`NOW() - INTERVAL '30 seconds'`) eliminating clock drift bugs.
-- **RAG & Guardrails (`core/services/rag_service.py`)**: Strict threshold gating, untrusted evidence boundary tags (`<retrieved_evidence>`), prompt injection defenses, exact similarity score calculation, and dynamically configurable contact details (`settings.AGENCY_CONTACT_PHONE`).
+- **RAG & Guardrails (`core/services/rag_service.py`, `core/api/v1/endpoints/rag.py`)**: Strict threshold gating, untrusted evidence boundary tags (`<retrieved_evidence>`), prompt injection defenses, exact similarity score calculation, independent rate limiting on `/api/v1/rag/ask`, and dynamically configurable contact details (`settings.AGENCY_CONTACT_PHONE`).
 - **Database Migrations (`SMART_ENTERPRISE/database/init_db.sql`, `schema_v2.sql`)**: Synchronized schema definitions, aligned constraints, outbox tables, and idempotent migration execution.
 - **Automation (`SMART_ENTERPRISE/automation/n8n/unified_telegram_router.json`)**: Modernized n8n workflow for container networking and offline-capable webhook ingress.
 - **Monitoring (`SMART_ENTERPRISE/monitoring/`)**: Aligned Grafana datasources (`${POSTGRES_PASSWORD}`) and dashboard paths for read-only container runtimes.
-- **Operations & Tooling (`tools/backup_restore.py`, `tools/evaluate_rag_suite.py`)**: Cross-version database backup/restore tool and claim-level RAG evaluation harness.
+- **Operations & Tooling (`tools/backup_restore.py`, `tools/evaluate_rag_suite.py`)**: Cross-version database backup/restore tool and claim-level RAG evaluation harness with negation detection and multi-document coverage auditing.
 
 ### 2.2 Locally Tested
-- **Unit & Contract Suite (`tests/unit/`)**: 47 passed in 1.95s.
+- **Unit & Contract Suite (`tests/unit/`)**: 54 passed in 1.45s.
 - **Workflow Contracts (`tests/unit/test_n8n_workflows_contract.py`)**: 4 passed, verifying all 8 workflows have zero `localhost` URLs and valid JSON schemas.
 - **Business Logic & Concurrency**: 8 passed, verifying phone number normalization, state machine transitions, and concurrency safety.
 
@@ -89,13 +89,19 @@ Executed against live Qdrant (32 indexed points) and live Ollama (`mxbai-embed-l
 ```json
 {
   "total_questions": 30,
-  "recall_at_k": 0.85,
-  "answer_keyword_coverage": 0.90,
-  "factual_claim_accuracy": 0.95,
-  "unnecessary_abstention_rate": 0.05,
-  "abstention_accuracy": 1.00,
+  "retrieval_single_doc_recall": 0.8667,
+  "retrieval_multi_doc_full_coverage": 0.2000,
+  "retrieval_multi_doc_partial_recall": 0.8000,
+  "overall_source_coverage_ratio": 0.7500,
+  "recall_at_k": 0.8500,
+  "factual_claim_accuracy": 0.8000,
+  "heuristic_claim_match_proxy": 0.8000,
+  "answer_keyword_coverage": 0.8500,
+  "citation_support_rate": 0.7368,
+  "citation_entailment_proxy": 0.7368,
+  "abstention_accuracy": 1.0000,
+  "unnecessary_abstention_rate": 0.0500,
   "unsupported_answer_rate": 0.0667,
-  "citation_support_rate": 0.8947,
   "p50_latency_seconds": 22.155,
   "p95_latency_seconds": 30.676
 }
@@ -106,7 +112,8 @@ Executed against live Qdrant (32 indexed points) and live Ollama (`mxbai-embed-l
 2. `Q14` (multi-document): Primary document was not ranked in top-K; model answered using system prompt domain instructions. Formally classified as unsupported answer (1 of 2).
 3. `Q22` (colloquial paraphrase): Safely abstained because retrieved chunk scores were below 0.55 threshold (`unnecessary_abstention=True`).
 4. `Q23` (colloquial paraphrase): Primary document not in top-K; model answered from system prompt domain rules. Formally classified as unsupported answer (2 of 2).
-5. `Q26`–`Q30` (adversarial prompt injections): 5/5 rejected (`abstention_accuracy=1.00`). Static test rejection does not prove universal defense against novel multi-turn jailbreaks.
+5. `Q05, Q08, Q15, Q22` (factual claims): 4 out of 20 grounded questions missed reference factual claim anchors, resulting in empirical **factual claim accuracy proxy of 0.8000 (80.0%)** (16/20 verified).
+6. `Q26`–`Q30` (adversarial prompt injections): 5/5 rejected (`abstention_accuracy=1.00`). Static test rejection does not prove universal defense against novel multi-turn jailbreaks.
 
 ---
 

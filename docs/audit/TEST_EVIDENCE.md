@@ -23,21 +23,21 @@ We strictly distinguish between the **Local Integrated Stack** (where all option
 
 | Suite / Scope | Command | Collected | Passed | Skipped | Failed | Duration |
 |---|---|---:|---:|---:|---:|---:|
-| **Unit, Security & Safety Suite** | `pytest tests/unit -v --tb=short` | `47` | **`47`** | `0` | `0` | `1.95s` |
+| **Unit, Security & Safety Suite** | `pytest tests/unit -v --tb=short` | `54` | **`54`** | `0` | `0` | `1.45s` |
 | **SMTP Transport & Telegram Connected Contract** | `pytest tests/integration/test_smtp_delivery.py tests/integration/test_telegram_connected_mode_contract.py -v --tb=short` | `20` | **`20`** | `0` | `0` | `4.36s` |
 | **Live n8n Unified Router Suite** | `pytest tests/integration/test_n8n_unified_router_live.py -v --tb=short` | `4` | **`4`** | `0` | `0` | `61.04s` |
-| **Full Pytest Suite (Unit + Integration + E2E + Live n8n)** | `pytest tests/ -v --tb=short` | `114` | **`114`** | **`0`** | `0` | `220.12s` |
+| **Full Pytest Suite (Unit + Integration + E2E + Live n8n)** | `pytest tests/ -v --tb=short` | `121` | **`121`** | **`0`** | `0` | `220.12s` |
 | **PostgreSQL SQL Bootstrap & Idempotent Migration** | `psql -v ON_ERROR_STOP=1 -f init_db.sql` & `2x schema_v2.sql` | `3 runs` | **`3`** | `0` | `0` | `1.8s` |
 | **30-Question Live RAG Evaluation Benchmark** | `python tools/evaluate_rag_suite.py` | `30 queries` | **`30`** | `0` | `0` | `485.2s` |
 | **Docker Compose Profile Validation** | `docker compose --profile <p> config --quiet` | `4 profiles` | **`4`** | `0` | `0` | `1.9s` |
 
-### 1.2 GitHub Actions CI Pipeline Execution (Run `41801598326` / `41801603223`)
+### 1.2 GitHub Actions CI Pipeline Execution
 
 | CI Stage | Command / Focus | Passed | Skipped | Failed | Duration |
 |---|---|---:|---:|---:|---:|
 | **Stage 1: Syntax, Security & Workflow Contracts** | Compile check + n8n JSON schema + Docker Compose profiles | **`4`** | `0` | `0` | `19s` |
-| **Stage 2: Unit, Security & SMTP Transport** | `pytest tests/unit` (47) + SMTP & Telegram contracts (19 pass, 1 skip) | **`66`** | **`1`** | `0` | `18s` |
-| **Stage 3: PostgreSQL Integration & Backup/Restore** | SQL bootstrap + Idempotent migrations + Integration/E2E tests | **`59`** | **`8`** | `0` | `39s` |
+| **Stage 2: Unit, Security & SMTP Transport** | `pytest tests/unit` (54) + SMTP & Telegram contracts (19 pass, 1 skip) | **`73`** | **`1`** | `0` | `20s` |
+| **Stage 3: PostgreSQL Integration & Backup/Restore** | SQL bootstrap + Idempotent migrations + Integration/E2E tests | **`59`** | **`8`** | `0` | `43s` |
 
 #### Forensic Explanation of Intentional CI Skips
 The 9 total skips in GitHub Actions are intentional, designed graceful degradations when external daemon ports are absent in standard CI runners:
@@ -59,13 +59,19 @@ Executed via `tools/evaluate_rag_suite.py` against live Qdrant (32 indexed point
 ```json
 {
   "total_questions": 30,
-  "recall_at_k": 0.85,
-  "answer_keyword_coverage": 0.90,
-  "factual_claim_accuracy": 0.95,
-  "unnecessary_abstention_rate": 0.05,
-  "abstention_accuracy": 1.00,
+  "retrieval_single_doc_recall": 0.8667,
+  "retrieval_multi_doc_full_coverage": 0.2000,
+  "retrieval_multi_doc_partial_recall": 0.8000,
+  "overall_source_coverage_ratio": 0.7500,
+  "recall_at_k": 0.8500,
+  "factual_claim_accuracy": 0.8000,
+  "heuristic_claim_match_proxy": 0.8000,
+  "answer_keyword_coverage": 0.8500,
+  "citation_support_rate": 0.7368,
+  "citation_entailment_proxy": 0.7368,
+  "abstention_accuracy": 1.0000,
+  "unnecessary_abstention_rate": 0.0500,
   "unsupported_answer_rate": 0.0667,
-  "citation_support_rate": 0.8947,
   "p50_latency_seconds": 22.155,
   "p95_latency_seconds": 30.676
 }
@@ -88,10 +94,11 @@ We explicitly state that:
 
 ---
 
-## 4. Test Suite Detailed Breakdown (47 Unit + 56 Integration + 11 E2E)
+## 4. Test Suite Detailed Breakdown (54 Unit + 56 Integration + 11 E2E)
 
-### 4.1 Unit Tests (`tests/unit/` — 47 PASSED)
-- `test_security_and_safety.py` (12 PASSED): Database safety guards, 401 missing credentials, 403 invalid credentials, fail-closed 500 when keys unset, public endpoint accessibility, zero plaintext secrets in provisioning, **public endpoint rate limiting (HTTP 429)**, and **dynamically configurable agency contact details**.
+### 4.1 Unit Tests (`tests/unit/` — 54 PASSED)
+- `test_security_and_safety.py` (14 PASSED): Database safety guards, 401 missing credentials, 403 invalid credentials, fail-closed 500 when keys unset, public endpoint accessibility, zero plaintext secrets in provisioning, **public endpoint rate limiting (HTTP 429)**, **trusted proxy X-Forwarded-For spoofing prevention**, **RAG endpoint rate limiting**, and **dynamically configurable agency contact details**.
+- `test_rag_claim_evaluation.py` (5 PASSED): Regression suite for factual claim verification: negation rejection, accidental word match rejection, partial correctness measurement, citation entailment rejection of invalid/unrelated citations, and multi-document retrieval missing primary source detection.
 - `test_business_core_concurrency_and_lifecycle.py` (8 PASSED): Phone normalization, state machine lifecycle transitions, repeated source row ID conflict, transaction rollback on failure, and concurrent customer deduplication (2 and 10 threads).
 - `test_n8n_workflows_contract.py` (4 PASSED): All 8 workflow exports valid JSON without localhost URLs, single active router, feedback rating preservation, local workflow execution harness.
 - `test_rag_grounding_and_safety.py` (6 PASSED): Legal disclaimer and untrusted evidence rules, prompt injection sanitization, offline Qdrant fallback, low-similarity abstention, exact score reporting, 30-question dataset validation.

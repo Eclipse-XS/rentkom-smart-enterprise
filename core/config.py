@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     # Public Endpoint Rate Limiting
     RATE_LIMIT_ENABLED: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() in ("true", "1", "yes")
     RATE_LIMIT_REQUESTS_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_REQUESTS_PER_MINUTE", "60"))
+    RATE_LIMIT_RAG_REQUESTS_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_RAG_REQUESTS_PER_MINUTE", "10"))
+
+    # Trusted Proxies for X-Forwarded-For resolution
+    # By default EMPTY: never blindly trust X-Forwarded-For from unknown client connections!
+    TRUSTED_PROXIES: List[str] = [
+        p.strip() for p in os.getenv("TRUSTED_PROXIES", "").split(",") if p.strip()
+    ]
 
     # CORS configuration
     CORS_ORIGINS: List[str] = [

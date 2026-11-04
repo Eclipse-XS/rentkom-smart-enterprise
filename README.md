@@ -228,11 +228,13 @@ All 8 workflow definitions in `SMART_ENTERPRISE/automation/n8n/` are validated b
   - Retrieved chunks are sanitized via `sanitize_retrieved_chunk()` and wrapped in `<retrieved_evidence>` untrusted data delimiters.
   - The system prompt explicitly prohibits unlicensed legal representation and includes an informational consultant disclaimer.
 - **30-Question Benchmark (`evaluation/rag_eval_dataset.json` & `evaluation/rag_eval_results.json`)**:
-  - **Recall@K (20 in-domain questions):** `0.85` (17/20 source hits)
+  - **Recall@K (20 in-domain questions):** `0.85` (17/20 any-source hits; 86.7% single-doc, 20.0% multi-doc full coverage)
+  - **Factual Claim Accuracy (Heuristic Proxy):** `0.80` (16/20 verified against reference claim anchors; Q05, Q08, Q15, Q22 missed)
   - **Abstention Accuracy (10 out-of-domain & adversarial questions):** `1.00` (10/10 rejected)
-  - **Unsupported Answer Rate:** `0.00` (0%)
-  - **Citation Support Rate:** `1.00` (100% of grounded answers backed by citations $\ge 0.55$)
-  - **Latency (Local CPU inference with `qwen3:4b-instruct`):** `p50 = 17.34s`, `p95 = 31.39s` (Abstention guardrail latency `< 0.01s`).
+  - **Unnecessary Abstention Rate:** `0.05` (1/20 questions: Q22)
+  - **Unsupported Answer Rate:** `0.0667` (6.67% — 2/30 questions: Q14, Q23 answered from system prompt rules when retrieval missed top-K)
+  - **Citation Entailment Proxy:** `0.7368` (strict source alignment) / `0.8947` (partial grounding)
+  - **Latency (Local CPU inference with `qwen3:4b-instruct`):** `p50 = 22.155s`, `p95 = 30.676s` (Abstention guardrail latency `< 0.001s`).
 
 ---
 
@@ -260,7 +262,7 @@ Grafana (`SMART_ENTERPRISE/monitoring/`) provisions two datasource integrations 
 The automated test suite comprises **114 automated test cases** across unit, integration, and end-to-end layers:
 
 ```bash
-# 1. Run fast unit, security, and workflow contract tests (47 tests, SQLite in-memory):
+# 1. Run fast unit, security, and workflow contract tests (54 tests, SQLite in-memory):
 pytest tests/unit -v --tb=short
 
 # 2. Run SMTP transport & Telegram connected-mode contract tests (20 tests):
@@ -293,7 +295,7 @@ python tools/manage.py restore --backup-file backups/rentkom_pg_backup_YYYYMMDD_
 1. **Docker Clean-Room Stack**: Fully verified on Docker Desktop v29.7.2 across all 4 profiles (`demo`, `connected`, `full-ai`, `dedicated-worker`); multi-service container orchestration is verified operational with chained healthchecks.
 2. **External Provider Credentials**: Live Telegram Bot API (`sendMessage`) and commercial corporate SMTP relay delivery require user-supplied credentials in `.env` or a production vault. Automated test suites verify complete protocol behavior (MIME, STARTTLS, error codes, upstream retry) using local TCP SMTP test servers and simulated HTTP contracts.
 3. **Local LLM CPU Latency**: Running `qwen3:4b-instruct` on CPU yields a median RAG generation latency of ~22.2s (P95: 30.7s); GPU acceleration (CUDA/ROCm) is recommended for high-concurrency production traffic.
-4. **Public Endpoint Rate Limiting**: Anonymous ingress (`POST /api/v1/requests/`, `POST /api/v1/feedbacks/`) is protected by an in-memory sliding-window rate limiter (60 req/min per IP, HTTP 429). In multi-node horizontal deployments, external reverse-proxy rate limiting (Nginx/Cloudflare/Traefik) should be enabled in front of the platform.
+4. **Public & RAG Rate Limiting**: Anonymous ingress (`POST /api/v1/requests/`, `POST /api/v1/feedbacks/`, 60 req/min) and neural RAG inference (`POST /api/v1/rag/ask`, 10 req/min) are protected by in-memory sliding-window rate limiters (HTTP 429). Client IP resolution enforces `TRUSTED_PROXIES` before honoring `X-Forwarded-For`. In multi-process horizontal deployments, Redis-backed rate limiting should be enabled in front of the platform.
 
 ---
 
