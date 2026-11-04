@@ -31,11 +31,14 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-lab4_real_estate}
+      RENTKOM_APP_PASSWORD: ${RENTKOM_APP_PASSWORD}
+      RENTKOM_N8N_PASSWORD: ${RENTKOM_N8N_PASSWORD}
     ports:
       - "${POSTGRES_BIND_IP:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./SMART_ENTERPRISE/database/init_db.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/02_roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-lab4_real_estate}"]
       interval: 5s
@@ -58,7 +61,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-lab4_real_estate}
+      DATABASE_URL: postgresql+psycopg2://rentkom_app:${RENTKOM_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-lab4_real_estate}
       NOTIFICATION_PROVIDER: ${NOTIFICATION_PROVIDER:-mock}
       ENVIRONMENT: ${ENVIRONMENT:-demo}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://${OLLAMA_HOST:-ollama}:11434}
@@ -102,7 +105,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-lab4_real_estate}
+      DATABASE_URL: postgresql+psycopg2://rentkom_app:${RENTKOM_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-lab4_real_estate}
       NOTIFICATION_PROVIDER: ${NOTIFICATION_PROVIDER:-mock}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rentkom.lviv.ua}
       SMTP_HOST: ${SMTP_HOST:-}
@@ -173,7 +176,7 @@ services:
   # 5. n8n Automation Engine (Connected Mode)
   # ----------------------------------------------------------------------------
   n8n:
-    image: n8nio/n8n:1.76.1
+    image: n8nio/n8n:2.46.5@sha256:2c99b0700dc0ebc89ff56d045499e0a7e16619d96a1360bc0de0b3750fbdcc1a
     container_name: rentkom-n8n
     restart: unless-stopped
     depends_on:
@@ -192,9 +195,9 @@ services:
       DB_POSTGRESDB_HOST: postgres
       DB_POSTGRESDB_PORT: 5432
       DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-lab4_real_estate}
-      DB_POSTGRESDB_USER: ${POSTGRES_USER:-postgres}
-      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      DB_POSTGRESDB_SCHEMA: public
+      DB_POSTGRESDB_USER: rentkom_n8n
+      DB_POSTGRESDB_PASSWORD: ${RENTKOM_N8N_PASSWORD}
+      DB_POSTGRESDB_SCHEMA: n8n
       BUSINESS_API_URL: ${BUSINESS_API_URL:-http://business-api:8000}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-rentkom-demo-internal-key-2026}
       TEST_WEBHOOK_SECRET: ${TEST_WEBHOOK_SECRET:-rentkom-demo-webhook-secret-2026}

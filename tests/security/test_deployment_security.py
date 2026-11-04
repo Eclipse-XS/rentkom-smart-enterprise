@@ -79,20 +79,24 @@ def test_sec_t13_compose_binds_ollama_to_127_0_0_1_by_default():
         assert "0.0.0.0" not in line, f"ollama port line '{line}' exposes 0.0.0.0"
 
 
-def test_sec_t14_compose_specifies_n8n_image_gte_1_76_1():
-    """SEC-T14: compose.yaml specifies n8n image >= 1.76.1."""
+def test_sec_t14_compose_pins_advisory_patched_n8n_image():
+    """SEC-T14: n8n is patched for CVE-2025-68613/CVE-2026-27577 and digest-pinned."""
     text = _read_compose_text()
     n8n_match = re.search(r"n8n:\s*\n(.*?)(?=\n\s\s[a-zA-Z0-9_-]+:|$)", text, re.DOTALL)
     assert n8n_match, "n8n service definition not found in compose.yaml"
     n8n_block = n8n_match.group(1)
 
-    image_match = re.search(r"image:\s*n8nio/n8n:([0-9]+\.[0-9]+\.[0-9]+)", n8n_block)
+    image_match = re.search(
+        r"image:\s*n8nio/n8n:([0-9]+\.[0-9]+\.[0-9]+)@sha256:([0-9a-f]{64})",
+        n8n_block,
+    )
     assert image_match, f"n8n image version pattern not found in {n8n_block}"
     ver_str = image_match.group(1)
     parts = [int(p) for p in ver_str.split(".")]
     assert len(parts) == 3
-    # Compare with (1, 76, 1)
-    assert tuple(parts) >= (1, 76, 1), f"n8n version {ver_str} is lower than required 1.76.1"
+    version = tuple(parts)
+    patched = version >= (2, 10, 1) or ((1, 123, 22) <= version < (2, 0, 0))
+    assert patched, f"n8n version {ver_str} is affected by CVE-2026-27577"
 
 
 def test_sec_t15_compose_sets_n8n_block_env_access_in_node_true():

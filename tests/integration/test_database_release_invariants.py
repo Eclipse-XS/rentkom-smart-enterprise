@@ -415,8 +415,9 @@ def test_data_t14_init_db_script_defines_role_privileges():
 
     assert "rentkom_app" in script
     assert "rentkom_n8n" in script
-    # n8n must have restricted table permissions (telegram_inbox, customer_feedbacks)
-    assert "GRANT SELECT, INSERT, UPDATE ON public.telegram_inbox TO rentkom_n8n" in script
-    assert "GRANT SELECT ON public.customer_feedbacks TO rentkom_n8n" in script
-    # n8n must NOT have unrestricted ALL TABLES privileges
+    # n8n owns only its private schema and receives no direct business-table access.
+    assert "CREATE SCHEMA IF NOT EXISTS n8n AUTHORIZATION rentkom_n8n" in script
+    assert "GRANT USAGE, CREATE ON SCHEMA n8n TO rentkom_n8n" in script
+    assert "REVOKE CREATE ON SCHEMA public FROM rentkom_n8n" in script
+    assert "REVOKE ALL ON ALL TABLES IN SCHEMA public FROM rentkom_n8n" in script
     assert "ALL TABLES IN SCHEMA public TO rentkom_n8n" not in script

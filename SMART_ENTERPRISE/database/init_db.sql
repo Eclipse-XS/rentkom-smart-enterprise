@@ -391,7 +391,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 10. Role and Privilege Separation (DATA-05)
-DO 
+DO $$
 BEGIN
     IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'rentkom_app') THEN
         GRANT USAGE ON SCHEMA public TO rentkom_app;
@@ -404,7 +404,7 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE ON public.telegram_inbox TO rentkom_n8n;
         GRANT SELECT ON public.customer_feedbacks TO rentkom_n8n;
     END IF;
-END ;
+END $$;
 -- Grant permissions to lab4_user if exists
 DO $$
 BEGIN
