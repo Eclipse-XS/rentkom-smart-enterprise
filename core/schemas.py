@@ -13,7 +13,6 @@ class CustomerBase(BaseModel):
     @classmethod
     def clean_phone(cls, v: str) -> str:
         v = v.strip()
-        # canonical format check / clean
         digits = re.sub(r"[^\d+]", "", v)
         if len(digits) < 7:
             raise ValueError("Phone number must have at least 7 digits")
@@ -63,6 +62,40 @@ class ServiceRequestResponse(BaseModel):
     source_row_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+class LeadSubmissionAcknowledgment(BaseModel):
+    submission_id: str
+    status: str = "RECEIVED"
+    message: str = "Request accepted for processing"
+
+class InboundLeadResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    submission_id: str
+    intake_channel: str
+    external_event_id: Optional[str] = None
+    payload_hash: str
+    full_name: str
+    phone: str
+    normalized_phone: str
+    email: Optional[str] = None
+    telegram_chat_id: Optional[int] = None
+    request_purpose: str
+    property_type: str
+    property_location: str
+    consultation_date: date
+    additional_comments: Optional[str] = None
+    status: str
+    review_notes: Optional[str] = None
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    promoted_request_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+class LeadPromotionRequest(BaseModel):
+    review_notes: Optional[str] = None
 
 class CustomerFeedbackCreate(BaseModel):
     client_identifier: str = Field(..., min_length=2)

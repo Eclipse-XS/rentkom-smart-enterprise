@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import time
 from datetime import datetime, timezone, timedelta
@@ -6,6 +7,8 @@ from typing import Dict, Any, Optional, Tuple
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from core.config import settings
+from core.models import TelegramInbox
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +43,8 @@ class TelegramIdempotencyManager:
         chat_id = (message.get("chat") or {}).get("id", "0")
         msg_id = message.get("message_id", "0")
         text_content = (message.get("text") or "").strip()
-        return f"tg_fallback:{chat_id}:{msg_id}:{hash(text_content)}"
+        text_digest = hashlib.sha256(text_content.encode("utf-8")).hexdigest()[:16]
+        return f"tg_fallback:{chat_id}:{msg_id}:{text_digest}"
 
     def parse_update_id(self, update: Dict[str, Any]) -> Tuple[int, int, str]:
         """Extracts (update_id, chat_id, message_text) with deterministic integer update_id."""
@@ -55,7 +59,8 @@ class TelegramIdempotencyManager:
             if msg_id is not None:
                 update_id = abs(int(f"{chat_id}{msg_id}") % (2**60))
             else:
-                update_id = abs(hash(f"{chat_id}:{text_content}")) % (2**60)
+                digest = hashlib.sha256(f"{chat_id}:{text_content}".encode("utf-8")).hexdigest()[:14]
+                update_id = int(digest, 16) % (2**60)
         else:
             update_id = int(update_id)
 
@@ -72,43 +77,85 @@ class TelegramIdempotencyManager:
         Acquires processing rights or returns cached response.
         If db is provided, uses PostgreSQL telegram_inbox table for cross-process locking and restart persistence.
         """
-        # If DB session is provided, use PostgreSQL-backed atomic UPSERT with lease
+        # If DB session is provided, use PostgreSQL-backed atomic UPSERT with lease (or SQLAlchemy ORM on SQLite)
         if db is not None:
             try:
                 update_id, chat_id, text_content = self.parse_update_id(update_data or {})
+                dialect_name = db.get_bind().dialect.name if db.get_bind() is not None else "postgresql"
 
-                # 1. Check if already completed in DB
+                if dialect_name != "postgresql":
+                    now_utc = datetime.now(timezone.utc)
+                    row = (
+                        db.query(TelegramInbox)
+                        .filter(TelegramInbox.bot_id == bot_id, TelegramInbox.update_id == update_id)
+                        .first()
+                    )
+                    if row is not None:
+                        if row.status == "COMPLETED" and row.response_payload:
+                            dup = CachedResponse(**row.response_payload)
+                            dup.is_duplicate = True
+                            return False, dup
+                        if row.status == "PROCESSING":
+                            locked_at = row.locked_at
+                            if locked_at.tzinfo is None:
+                                locked_at = locked_at.replace(tzinfo=timezone.utc)
+                            if now_utc - locked_at < timedelta(seconds=self.lease_timeout_seconds):
+                                if row.response_payload:
+                                    dup = CachedResponse(**row.response_payload)
+                                    dup.is_duplicate = True
+                                    return False, dup
+                                return False, CachedResponse(
+                                    route="In Progress",
+                                    response_text="Запит обробляється, зачекайте будь ласка...",
+                                    is_duplicate=True,
+                                )
+                        row.status = "PROCESSING"
+                        row.locked_at = now_utc
+                        row.retry_count = (row.retry_count or 0) + 1
+                        db.commit()
+                        return True, None
+                    else:
+                        new_row = TelegramInbox(
+                            bot_id=bot_id,
+                            update_id=update_id,
+                            chat_id=chat_id,
+                            message_text=text_content,
+                            status="PROCESSING",
+                            locked_at=now_utc,
+                            retry_count=0,
+                            created_at=now_utc,
+                        )
+                        db.add(new_row)
+                        db.commit()
+                        return True, None
+
+                # 1. Check if already completed or in-progress in DB (PostgreSQL using DB server clock)
                 check_res = db.execute(text("""
-                    SELECT status, response_payload, locked_at, retry_count
+                    SELECT status, response_payload, (locked_at > NOW() - INTERVAL '30 seconds') AS lease_active, retry_count
                     FROM public.telegram_inbox
                     WHERE bot_id = :bot_id AND update_id = :update_id;
                 """), {"bot_id": bot_id, "update_id": update_id}).fetchone()
 
                 if check_res:
-                    status, payload, locked_at, retry_count = check_res
+                    status, payload, lease_active, retry_count = check_res
                     if status == "COMPLETED" and payload:
                         logger.info(f"[IDEMPOTENCY-DB] Duplicate Telegram update {update_id} already COMPLETED. Returning cached response.")
                         dup = CachedResponse(**payload)
                         dup.is_duplicate = True
                         return False, dup
 
-                    # If currently PROCESSING and lease hasn't expired (< 30s)
-                    if status == "PROCESSING":
-                        now_utc = datetime.now(timezone.utc)
-                        # Normalize locked_at to timezone-aware UTC if needed
-                        if locked_at.tzinfo is None:
-                            locked_at = locked_at.replace(tzinfo=timezone.utc)
-                        if now_utc - locked_at < timedelta(seconds=self.lease_timeout_seconds):
-                            logger.info(f"[IDEMPOTENCY-DB] Telegram update {update_id} is in-progress by another worker (lease active). Suppressing duplicate.")
-                            if payload:
-                                dup = CachedResponse(**payload)
-                                dup.is_duplicate = True
-                                return False, dup
-                            return False, CachedResponse(
-                                route="In Progress",
-                                response_text="Запит обробляється, зачекайте будь ласка...",
-                                is_duplicate=True
-                            )
+                    # If currently PROCESSING and lease hasn't expired (< 30s on DB server clock)
+                    if status == "PROCESSING" and lease_active:
+                        logger.info(f"[IDEMPOTENCY-DB] Telegram update {update_id} is in-progress by another worker (lease active). Suppressing duplicate.")
+                        if payload:
+                            dup = CachedResponse(**payload)
+                            dup.is_duplicate = True
+                            return False, dup
+                        return False, CachedResponse(
+                            route="In Progress",
+                            response_text="Запит обробляється, зачекайте будь ласка...",
+                            is_duplicate=True
+                        )
 
                 # 2. Atomic claim via UPSERT with lease recovery
                 claim_res = db.execute(text("""
@@ -139,8 +186,11 @@ class TelegramIdempotencyManager:
                     return True, None
 
             except Exception as e:
-                logger.warning(f"[IDEMPOTENCY-DB] Database lock check failed ({e}). Falling back to memory guard.")
+                logger.warning(f"[IDEMPOTENCY-DB] Database lock check failed ({e}).")
                 db.rollback()
+                if not settings.is_safe_demo_or_dev:
+                    raise RuntimeError(f"Authoritative database idempotency lease failed in production: {e}")
+                logger.info("[IDEMPOTENCY-DB] Falling back to memory guard for safe demo/development environment.")
 
         # In-memory fallback
         async with self._lock:
@@ -185,22 +235,35 @@ class TelegramIdempotencyManager:
         bot_id: str = "rentkom_bot"
     ):
         """Records the completed response in PostgreSQL inbox and memory cache, unblocking parallel tasks."""
-        # 1. Update PostgreSQL inbox
+        # 1. Update DB inbox
         if db is not None:
             try:
                 update_id, _, _ = self.parse_update_id(update_data or {})
-                db.execute(text("""
-                    UPDATE public.telegram_inbox
-                    SET status = 'COMPLETED',
-                        response_payload = CAST(:payload AS jsonb),
-                        completed_at = NOW()
-                    WHERE bot_id = :bot_id AND update_id = :update_id;
-                """), {
-                    "payload": response.model_dump_json(),
-                    "bot_id": bot_id,
-                    "update_id": update_id
-                })
-                db.commit()
+                dialect_name = db.get_bind().dialect.name if db.get_bind() is not None else "postgresql"
+                if dialect_name != "postgresql":
+                    row = (
+                        db.query(TelegramInbox)
+                        .filter(TelegramInbox.bot_id == bot_id, TelegramInbox.update_id == update_id)
+                        .first()
+                    )
+                    if row is not None:
+                        row.status = "COMPLETED"
+                        row.response_payload = response.model_dump()
+                        row.completed_at = datetime.now(timezone.utc)
+                        db.commit()
+                else:
+                    db.execute(text("""
+                        UPDATE public.telegram_inbox
+                        SET status = 'COMPLETED',
+                            response_payload = CAST(:payload AS jsonb),
+                            completed_at = NOW()
+                        WHERE bot_id = :bot_id AND update_id = :update_id;
+                    """), {
+                        "payload": response.model_dump_json(),
+                        "bot_id": bot_id,
+                        "update_id": update_id
+                    })
+                    db.commit()
                 logger.info(f"[IDEMPOTENCY-DB] Persisted COMPLETED state for Telegram update {update_id}.")
             except Exception as e:
                 logger.warning(f"[IDEMPOTENCY-DB] Failed to record completion in DB: {e}")
@@ -225,12 +288,23 @@ class TelegramIdempotencyManager:
         if db is not None:
             try:
                 update_id, _, _ = self.parse_update_id(update_data or {})
-                db.execute(text("""
-                    UPDATE public.telegram_inbox
-                    SET status = 'FAILED'
-                    WHERE bot_id = :bot_id AND update_id = :update_id;
-                """), {"bot_id": bot_id, "update_id": update_id})
-                db.commit()
+                dialect_name = db.get_bind().dialect.name if db.get_bind() is not None else "postgresql"
+                if dialect_name != "postgresql":
+                    row = (
+                        db.query(TelegramInbox)
+                        .filter(TelegramInbox.bot_id == bot_id, TelegramInbox.update_id == update_id)
+                        .first()
+                    )
+                    if row is not None:
+                        row.status = "FAILED"
+                        db.commit()
+                else:
+                    db.execute(text("""
+                        UPDATE public.telegram_inbox
+                        SET status = 'FAILED'
+                        WHERE bot_id = :bot_id AND update_id = :update_id;
+                    """), {"bot_id": bot_id, "update_id": update_id})
+                    db.commit()
             except Exception as e:
                 db.rollback()
 

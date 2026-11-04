@@ -1,3 +1,4 @@
+import os
 import pytest
 import time
 from sqlalchemy import create_engine, text
@@ -7,13 +8,43 @@ from fastapi.testclient import TestClient
 from core.main import app
 from core.database import get_db, Base
 from core.services.telegram_idempotency import telegram_idempotency
+from tests.safety import assert_safe_test_database, ensure_test_schema_marker
 
-POSTGRES_URL = "postgresql+psycopg2://postgres@127.0.0.1:5433/postgres"
 
 @pytest.fixture(scope="module")
 def pg_session():
-    engine = create_engine(POSTGRES_URL)
+    postgres_url = os.getenv("TEST_DATABASE_URL")
+    if not postgres_url:
+        pytest.skip("TEST_DATABASE_URL not set; skipping telegram_inbox PostgreSQL test.")
+    assert_safe_test_database(postgres_url)
+    try:
+        engine = create_engine(postgres_url, pool_pre_ping=True)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1;"))
+        ensure_test_schema_marker(engine)
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        pytest.skip(f"PostgreSQL test database unreachable: {exc}")
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS public.telegram_inbox (
+                id BIGSERIAL PRIMARY KEY,
+                bot_id VARCHAR(64) NOT NULL DEFAULT 'rentkom_bot',
+                update_id BIGINT NOT NULL,
+                chat_id BIGINT,
+                message_text TEXT,
+                status VARCHAR(24) NOT NULL DEFAULT 'PROCESSING',
+                response_payload JSONB,
+                error_detail TEXT,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                locked_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_telegram_inbox_bot_update UNIQUE (bot_id, update_id)
+            );
+        """))
     Session = sessionmaker(bind=engine, expire_on_commit=False)
 
     def override_get_db():

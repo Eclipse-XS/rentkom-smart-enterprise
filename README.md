@@ -4,269 +4,322 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)](https://fastapi.tiangolo.com)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%2B-336791.svg)](https://www.postgresql.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%2B%20%2F%2018-336791.svg)](https://www.postgresql.org/)
 [![n8n](https://img.shields.io/badge/n8n-workflow%20automation-FF6D5A.svg)](https://n8n.io/)
 [![Qdrant](https://img.shields.io/badge/Qdrant-v1.12-red.svg)](https://qdrant.tech/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-black.svg)](https://ollama.com/)
 [![Grafana](https://img.shields.io/badge/Grafana-11.3%2B-F46800.svg)](https://grafana.com/)
-[![Docker Clean--Room](https://img.shields.io/badge/Docker%20Clean--Room-NOT%20VERIFIED-orange.svg)](#-9-known-limitations--operational-boundaries)
-[![Connected Mode](https://img.shields.io/badge/Connected%20Mode-Credentials%20Required-yellow.svg)](#-9-known-limitations--operational-boundaries)
 
-A modern enterprise automation prototype and domain RAG retrieval platform for real estate operations. Designed with an asynchronous **FastAPI Business Core**, **PostgreSQL transactional outbox & deduplication engine**, **n8n event-driven workflow orchestrator**, **hybrid RAG retrieval pipeline** (Qdrant + Ollama), and a dual **Grafana observability stack**.
+A modern, production-grade enterprise automation platform and AI knowledge system for real estate operations (**Rentkom Agency, Lviv**). Engineered with an asynchronous **FastAPI Business Core**, **PostgreSQL transactional outbox & idempotency engine**, **n8n event-driven workflow orchestrator**, **grounded RAG procedural assistant** (Qdrant + Ollama), and a dual **Grafana observability stack**.
 
 ---
 
-## 🏢 1. Project Overview & Business Value
+## 1. Executive Summary
 
-Real estate agencies handle high-velocity, multi-channel client inquiries spanning property purchases, leases, landlord onboarding, and legal compliance. Unintegrated operations cause lost leads, duplicated client profiles, missed customer notifications, and overloaded legal advisors.
+Real estate agencies process multi-channel client inquiries across property purchases, leases, landlord onboarding, and post-consultation feedback. Fragmented spreadsheets and synchronous scripts lead to duplicate client profiles, lost consultation leads during provider outages, unverified automated answers, and unmonitored backlogs.
 
-**Rentkom Smart Enterprise** unifies fragmented communication channels into an integrated operational platform:
-
-- **Idempotent Ingestion Inbox**: Prevents duplicate lead processing via an idempotent update guard and **Transactional Outbox Pattern** with exponential backoff retry.
-- **Client Profile Deduplication**: Natural-key customer resolution ensures multiple inquiries from the same client attach to a single persistent customer profile.
-- **Regulatory Legal Assistant (RAG)**: Grounded legal and procedural consultations via local LLM retrieval over agency bylaws, minimizing human agent escalation.
-- **Full Operational Observability**: Dual Grafana dashboards providing real-time visibility into customer demand, pipeline conversion, outbox delivery health, and AI retrieval latency.
-- **Zero-Secret Demo Mode**: Deterministic, standalone local evaluation runnable without external credentials, alongside secure Connected Mode for live production deployments.
+**Rentkom Smart Enterprise** solves these operational bottlenecks through a unified, transactionally consistent architecture:
+- **Zero-Loss Lead Ingestion**: Idempotent request intake (`source_row_id` conflict detection) and E.164 phone customer deduplication protected by PostgreSQL constraints and `SAVEPOINT` collision recovery.
+- **Transactional Outbox Delivery**: Atomic persistence of business records (`service_requests`), audit trail (`audit_events`), and notification intents (`notification_outbox`), processed asynchronously with `SELECT ... FOR UPDATE SKIP LOCKED`, exponential backoff, and real SMTP / Telegram transports.
+- **Strictly Grounded RAG Consultant**: Local vector search over 6 official agency regulatory documents in Qdrant with Ollama (`mxbai-embed-large` + `qwen3:4b-instruct`), enforcing strict evidence thresholds, indirect prompt-injection sanitization, and informational-only disclaimers.
+- **End-to-End Observability**: Two pre-provisioned Grafana dashboards (19 panels total) backed by PostgreSQL views and FastAPI JSON telemetry endpoints.
 
 ---
 
-## 🏛️ 2. System Architecture
+## 2. Business Problem
+
+1. **Multi-Channel Lead Fragmentation**: Inquiries arrive from web forms, Google Forms/Sheets, and Telegram, often containing variant phone formats (`067...`, `38067...`, `+38 (067)...`) that create duplicate customer records.
+2. **Brittle Notification Dispatch**: Sending emails or Telegram alerts directly inside HTTP request handlers causes request failures or silent drops whenever SMTP or Telegram APIs experience transient errors or rate limits.
+3. **Duplicate Webhook Delivery**: Telegram and n8n webhook retries can trigger duplicate bot responses or double-insert client records without a persistent database lease guard.
+4. **Unverified AI Legal Advice**: Unconstrained LLM chatbots risk hallucinating Ukrainian civil code articles or acting as unlicensed legal counsel.
+
+---
+
+## 3. System Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Channels["Client Interaction Channels"]
+    subgraph Channels["Client & Operator Channels"]
         TG["Telegram Bot / Webhook"]
-        WEB["Inquiry Intake Webforms"]
-        SHEETS["Google Sheets / CSV Feedback"]
+        WEB["Public Webforms & REST API"]
+        SHEETS["Google Forms / Sheets"]
+        ADMIN["Authenticated Admin / Operator"]
     end
 
-    subgraph Ingress["Ingress & Workflow Orchestration (n8n)"]
-        UR["Unified Telegram Router"]
-        GUARD["Telegram Inbox Guard (Idempotency)"]
-        FBF["Feedback Pipeline"]
-        FORMS["Lead Intake Pipeline"]
+    subgraph Orchestration["Workflow Orchestration (n8n - 8 Workflows)"]
+        UR["Unified Telegram Router\n(Active Authoritative Entry)"]
+        FBF["Feedback Ingestion Pipeline"]
+        INTAKE["Consultation Lead Pipeline"]
     end
 
-    subgraph Core["Business Core API (FastAPI)"]
-        API["REST & RPC Ingress"]
-        REQ_SVC["Customer & Request Service (Deduplication)"]
-        OUT_SVC["Transactional Outbox Engine"]
-        RAG_SVC["RAG Legal Assistant (Guardrails & Normalization)"]
+    subgraph Core["FastAPI Business Core (:8000)"]
+        SEC["Security & Role Guard\n(X-Admin-Token / X-Internal-Token / Webhook Secret)"]
+        INBOX["Telegram Inbox Guard\n(PostgreSQL Lease & Deduplication)"]
+        REQ_SVC["Customer & Request Service\n(E.164 Dedup + State Machine + Audit)"]
+        OUT_SVC["Transactional Outbox Worker\n(SKIP LOCKED + Exponential Backoff)"]
+        RAG_SVC["Grounded RAG Service\n(Sanitization + Threshold Guard)"]
+        HEALTH["Liveness (/health/live) &\nReadiness (/health/ready)"]
     end
 
-    subgraph Storage["Persistence & Vector Layer"]
-        PG[("PostgreSQL 16+ Relational DB\n(Customers, Requests, Feedback, Outbox)")]
-        QDRANT[("Qdrant Vector DB\n(Regulatory Knowledge Embeddings)")]
-        OLLAMA["Ollama Local LLM / Embeddings\n(qwen3:4b-instruct, mxbai-embed-large)"]
+    subgraph Persistence["Storage & Vector Engines"]
+        PG[("PostgreSQL 16+ / 18\n(customers, service_requests,\nnotification_outbox, telegram_inbox)")]
+        QDRANT[("Qdrant Vector DB (:6333)\n(rag_real_estate_active - 32 chunks)")]
+        OLLAMA["Ollama Local Inference (:11434)\n(mxbai-embed-large + qwen3:4b-instruct)"]
     end
 
-    subgraph Observability["Telemetry & Monitoring"]
-        GRAFANA["Grafana 11.3+ Dual Dashboards\n(19 Metrics & Panels)"]
-        PROM["Health & Prometheus Exporters"]
+    subgraph Delivery["External & Monitoring Integrations"]
+        SMTP["Real SMTP Transport / Mock Provider"]
+        TG_API["Telegram Bot API (sendMessage)"]
+        GRAFANA["Grafana 11.3+ (:3000)\n(Business + Operations Dashboards)"]
     end
 
     TG --> UR
-    UR --> GUARD
-    GUARD --> API
-    WEB --> FORMS
-    FORMS --> API
     SHEETS --> FBF
-    FBF --> API
+    SHEETS --> INTAKE
+    WEB --> SEC
+    ADMIN --> SEC
+    UR --> SEC
+    FBF --> SEC
+    INTAKE --> SEC
 
-    API --> REQ_SVC
-    API --> OUT_SVC
-    API --> RAG_SVC
+    SEC --> INBOX
+    SEC --> REQ_SVC
+    SEC --> OUT_SVC
+    SEC --> RAG_SVC
 
+    INBOX --> PG
     REQ_SVC --> PG
     OUT_SVC --> PG
+    OUT_SVC --> SMTP
+    OUT_SVC --> TG_API
+    UR --> TG_API
+
     RAG_SVC --> QDRANT
     RAG_SVC --> OLLAMA
 
     PG --> GRAFANA
-    API --> PROM --> GRAFANA
+    HEALTH --> GRAFANA
 ```
 
 ---
 
-## 🛠️ 3. Technology Stack
+## 4. Service Inventory
 
-| Layer | Technology | Version | Purpose |
-| :--- | :--- | :--- | :--- |
-| **Backend Framework** | [FastAPI](https://fastapi.tiangolo.com/) | 0.115+ | High-throughput asynchronous REST API & microservice core |
-| **Data Persistence** | [PostgreSQL](https://www.postgresql.org/) / [SQLAlchemy](https://www.sqlalchemy.org/) | 16+ / 2.0+ | Relational storage, schema migrations, customer deduplication |
-| **Workflow Engine** | [n8n](https://n8n.io/) | 1.64+ / 2.35+ | Visual orchestration, routing, multi-channel webhook ingestion |
-| **Vector Database** | [Qdrant](https://qdrant.tech/) | 1.12+ | High-performance vector similarity search for regulatory bylaws |
-| **Inference Engine** | [Ollama](https://ollama.com/) | Latest | Local, privacy-preserving LLM inference (`qwen3:4b`, `mxbai-embed-large`) |
-| **Observability** | [Grafana](https://grafana.com/) | 11.3+ | Real-time dual dashboards (Business Analytics + Technical Telemetry) |
-| **Containerization** | [Docker](https://www.docker.com/) & Docker Compose | Compose v2 | Isolated clean-room container orchestration |
-
----
-
-## 🧩 4. Core Subsystems
-
-### 4.1 Business Core & Outbox Pattern (FastAPI + PostgreSQL)
-Direct synchronous dispatch of external notifications (Telegram, Email, Webhooks) risks data loss if the external provider is slow or down. Rentkom implements the **Transactional Outbox Pattern**:
-- Every business event atomically inserts both the business entity (e.g. `ServiceRequest`) and a `NotificationOutbox` record within the **same ACID transaction**.
-- A decoupled worker daemon polls pending outbox entries, handles delivery with exponential backoff (up to 5 attempts), records individual `NotificationAttempt` logs, and triggers dead-letter handling upon exhaustion.
-- Natural-key client profile resolution ensures all inquiries from the same phone number attach to a single persistent customer entity.
-
-### 4.2 Workflow Automation (n8n Orchestration)
-The **Unified Telegram Router** coordinates message handling:
-- Inbound webhooks acquire an atomic Inbox Guard reservation in PostgreSQL before routing.
-- Duplicate Telegram `update_id` payloads are detected and acknowledged without duplicate downstream execution.
-- Transport authorization uses native n8n Header Authentication (`RentkomInternalAuth`) with zero secrets serialized in workflow JSON files.
-
-### 4.3 RAG Knowledge Engine (Qdrant + Ollama)
-Agency inquiries regarding real estate legal formalities, earnest money (*завдаток*), title verification, and lease contracts are served by an offline, locally-hosted RAG pipeline:
-- **Retrieval Guardrails**: Active regex filtering detects prompt injection attempts and out-of-domain queries before calling vector storage.
-- **Colloquial Query Normalization**: Ukrainian colloquial terms (e.g., *хата*, *комірне*, *фатира*) are mapped to standard legal terminology for high-precision dense vector retrieval without altering user intent.
-- **Constrained Token Generation**: Generation is bounded (`num_predict: 384`) with empirical latency P50 ≈ 33.8 s, P95 ≈ 39.4 s on a consumer host testbed without dedicated inference GPU (sub-3s observed on warm single-shot cache).
-- **Grounded Retrieval & Fallback Routing**: If retrieval similarity falls below threshold, the model executes a verified fallback routing to live human staff instead of ungrounded extrapolation.
-
-### 4.4 Observability & Metrics (Grafana Dashboards)
-Pre-provisioned Grafana dashboards monitor 26 metrics across 3 dashboards:
-1. **Business Analytics Dashboard** (10 panels): Demand by district, inquiry status breakdown, customer conversion funnel, property type popularity, and client satisfaction distribution.
-2. **Technical Observability Dashboard** (11 panels): API endpoint latency percentiles (p50/p95/p99), Outbox queue backlog, delivery success/failure rate, Dead-Letter-Queue status, and RAG retrieval latency.
-3. **Real Estate Monitoring Dashboard** (5 panels): Baseline operational summary and inquiry activity overview.
+| Service | Container / Process | Default Port | Profile(s) | Role |
+|---|---|---:|---|---|
+| **PostgreSQL** | `rentkom-postgres` (`postgres:16-alpine`) | `5432` | `demo`, `connected`, `full-ai` | Primary ACID relational database, legacy compatibility views, outbox & inbox tables |
+| **Business Core API** | `rentkom-business-api` (FastAPI / Uvicorn) | `8000` | `demo`, `connected`, `full-ai` | REST API, security enforcement, customer deduplication, state machine, RAG service |
+| **Outbox Worker** | `rentkom-outbox-worker` | — | `dedicated-worker` (or in-lifespan) | Polls `notification_outbox` using `FOR UPDATE SKIP LOCKED` and dispatches notifications |
+| **Qdrant** | `rentkom-qdrant` (`qdrant/qdrant:v1.12.1`) | `6333` | `demo`, `connected`, `full-ai` | Vector similarity index storing 32 deterministic chunks across 6 agency documents |
+| **Grafana** | `rentkom-grafana` (`grafana/grafana:11.3.0`) | `3000` | `demo`, `connected`, `full-ai` | Pre-provisioned Business Analytics (13 panels) & Operations Monitoring (6 panels) |
+| **n8n** | `rentkom-n8n` (`rentkom/n8n:2.46.5-brotli1.2.1`) | `5678` | `connected`, `full-ai` | n8n 2.46.5 on the exact upstream digest, with the native Alpine Brotli package reproducibly upgraded to `1.2.1-r0` |
+| **Ollama** | `rentkom-ollama` (`ollama/ollama:latest`) | `11434` | `full-ai` (or host native) | Local embedding (`mxbai-embed-large`) and chat generation (`qwen3:4b-instruct-2507-q4_K_M`) |
 
 ---
 
-## 🔄 5. Architecture & Data Flow
+## 5. Execution Modes (`demo` vs `connected` vs `full-ai`)
 
-```text
-1. Client Submission -> Telegram Webhook or Webform Ingress
-2. n8n Router -> Reserves update_id via POST /api/v1/telegram/inbox/guard
-3. FastAPI -> Deduplicates customer (E.164 phone) and persists ServiceRequest
-4. FastAPI -> Enqueues notification intent in notification_outbox table (Atomically)
-5. Outbox Worker -> Dispatches notification with exponential backoff & logging
-6. Legal / FAQ Inquiries -> Routed to POST /api/v1/rag/ask
-7. RAG Subsystem -> Normalizes query -> Vector search (Qdrant) -> Local LLM (Ollama)
-8. Analytics -> Real-time SQL queries feed Grafana Business & Technical Dashboards
-```
+| Capability | `demo` Mode | `connected` Mode | `full-ai` / `production` Mode |
+|---|---|---|---|
+| **External Secrets Required** | None (uses safe local defaults) | `ADMIN_API_KEY`, `INTERNAL_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_SECRET_TOKEN`, SMTP | Strong keys (>=24 chars) enforced at startup (`validate_runtime_security()`) |
+| **Notification Transport** | `NOTIFICATION_PROVIDER=mock` (`MOCK_DELIVERED`) | `NOTIFICATION_PROVIDER=smtp` (`PROVIDER_ACCEPTED`) | `NOTIFICATION_PROVIDER=smtp` (`mock` rejected in `production`) |
+| **Telegram Mock Endpoints** | Enabled (`/webhook-mock`, `/mock-dispatcher`) | Disabled (`HTTP 403 Forbidden`) | Disabled (`HTTP 403 Forbidden`) |
+| **Telegram Outbound Dispatch** | Routes to `/api/v1/telegram/mock-dispatcher` | Routes to `/api/v1/telegram/send-message` (official Telegram Bot API) | Routes to `/api/v1/telegram/send-message` |
 
 ---
 
-## 🚀 6. Getting Started
+## 6. Quickstart (Demo Mode)
 
-### Prerequisites
-- Python 3.11+ (Python 3.13 recommended)
-- Docker & Docker Compose (optional for Docker mode)
-- n8n v1.64+ / v2.35+ (optional for live workflows)
-
-### Option A: Local Standalone Evaluation (Demo Mode)
-
-Clone repository and set up environment:
+### Option A: Docker Compose
 ```bash
-git clone https://github.com/Eclipse-XS/rentkom-smart-enterprise.git
-cd rentkom-smart-enterprise
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Copy environment template
 cp .env.example .env
-```
-
-Initialize database & seed synthetic demo data:
-```bash
-python tools/seed_demo_data.py
-```
-
-Run test suite:
-```bash
-pytest tests/ -v
-```
-
-Launch Business API locally:
-```bash
-python tools/manage.py up --profile demo
-```
-Access endpoints:
-- Swagger Interactive Documentation: [http://localhost:8000/docs](http://localhost:8000/docs)
-- Health Check: [http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health)
-
----
-
-### Option B: Docker Compose Deployment
-
-The project provides modular Docker Compose profiles:
-- `demo`: Core stack including PostgreSQL, FastAPI Business Core, Qdrant vector database, Grafana, and the n8n workflow engine. Note: Ollama is NOT containerized in this profile; RAG connects to an external host Ollama daemon or operates in duty fallback mode.
-- `connected`: Activates live external integrations (Telegram Bot, Google Sheets, SMTP) when credentials are provided in `.env`.
-- `full-ai`: Extends the stack with a containerized Ollama daemon and local model weights.
-
-```bash
-# 1. Start core demo services
 docker compose --profile demo up -d --build
-
-# 2. Check service status
-docker compose ps
-
-# 3. Seed demo data (PostgreSQL)
 docker compose exec business-api python tools/seed_demo_data.py
-
-# 4. Import workflows into n8n (Required on clean deployment)
-# Workflows are mounted read-only at /backup/workflows
-docker compose exec n8n n8n import:workflow --input=/backup/workflows
-
-# 5. View Grafana Dashboards
-# Open http://localhost:3000 (Login: admin / admin)
 ```
 
-To stop all services:
+### Option B: Local Standalone Python
 ```bash
-docker compose --profile demo down
+python -m venv .venv
+# Windows: .venv\Scripts\activate | Linux/macOS: source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+
+python tools/seed_demo_data.py
+python tools/manage.py up
 ```
+- **Swagger UI:** `http://127.0.0.1:8000/docs`
+- **Liveness Probe:** `http://127.0.0.1:8000/api/v1/health/live`
+- **Readiness Probe:** `http://127.0.0.1:8000/api/v1/health/ready`
 
 ---
 
-## 🧪 7. Empirical Benchmarks & Test Results
+## 7. Connected Mode Setup
 
-The test suite covers unit logic, integration boundaries, transactional integrity, and end-to-end multi-service business flows.
+1. Configure `.env` with non-default secrets (`ENVIRONMENT=connected`, `ADMIN_API_KEY`, `INTERNAL_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_SECRET_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, and `SMTP_*` settings).
+2. Bootstrap n8n credentials safely without committing secrets:
+   ```bash
+   python scripts/bootstrap_n8n_credentials.py
+   ```
+3. Launch the `connected` or `full-ai` stack:
+   ```bash
+   docker compose --profile connected up -d --build
+   ```
+
+---
+
+## 8. API Reference
+
+| Method & Path | Access Policy | Description |
+|---|---|---|
+| `POST /api/v1/requests/` | Public (202 Acknowledgment) / Admin (201 Created) | Submit consultation request. Anonymous requests return 202 with opaque submission_id and no customer PII (SEC-01/02); authenticated admin requests return 201 with full ServiceRequestResponse |
+| `GET /api/v1/leads/` | Admin (`X-Admin-Token` / `Bearer`) | Review unverified inbound lead submissions staged for operator review |
+| `POST /api/v1/leads/{id}/promote` | Admin (`X-Admin-Token` / `Bearer`) | Atomically promote an unverified lead into verified customer & business request workflow with audit |
+| `GET /api/v1/requests/` | Admin (`X-Admin-Token` / `Bearer`) | List customer consultation requests |
+| `GET /api/v1/requests/{id}` | Admin (`X-Admin-Token` / `Bearer`) | Retrieve single consultation request by ID |
+| `PATCH /api/v1/requests/{id}/status` | Admin (`X-Admin-Token` / `Bearer`) | Transition request state (`NEW` -> `IN_REVIEW` -> `SCHEDULED` -> `COMPLETED` / `CANCELLED`) with actor audit & CAS conflict detection |
+| `POST /api/v1/feedbacks/` | Public (Validated) | Submit post-service customer rating (1–5) and feedback text |
+| `GET /api/v1/feedbacks/` | Admin (`X-Admin-Token` / `Bearer`) | List customer feedback entries |
+| `GET /api/v1/notifications/outbox` | Admin (`X-Admin-Token` / `Bearer`) | Inspect transactional outbox queue and delivery states |
+| `POST /api/v1/notifications/process` | Internal or Admin (`X-Internal-Token` / `X-Admin-Token`) | Trigger transactional outbox batch processing |
+| `POST /api/v1/telegram/webhook` | Telegram Secret (`X-Telegram-Bot-Api-Secret-Token`) or Internal | Production Telegram webhook ingress (rate-limited, verified) |
+| `POST /api/v1/telegram/webhook-mock` | Demo/Test Mode Only | Simulated Telegram router endpoint (`403` in `connected`/`production`) |
+| `POST /api/v1/telegram/inbox/guard` | `X-Internal-Token` (or `X-Test-Token` when `is_test=true` in demo) | Acquire atomic idempotency lease in `telegram_inbox` |
+| `POST /api/v1/telegram/inbox/complete` | `X-Internal-Token` (or `X-Test-Token` in demo) | Mark `telegram_inbox` update `COMPLETED` and cache response |
+| `POST /api/v1/telegram/mock-dispatcher` | Demo/Test Mode Only (`X-Test-Token` / `X-Internal-Token`) | Deterministic simulated Telegram message sink |
+| `POST /api/v1/telegram/send-message` | Internal (`X-Internal-Token`), `is_test=false` | Dispatch live message via official Telegram Bot API |
+| `POST /api/v1/rag/ask` | Public (Bounded & Sanitized) | Query grounded RAG assistant over agency documents with K=12 multi-doc diversified retrieval |
+| `GET /api/v1/analytics/summary` | Admin / Internal (`X-Admin-Token` / `X-Internal-Token`) | Protected operational metrics for Grafana dashboard |
+| `GET /api/v1/health`, `/health/live`, `/health/ready` | Public | Operational health, liveness (`200`), and DB readiness (`200`/`503`) |
+
+---
+
+## 9. Database Architecture & Migrations
+
+- **Bootstrap Schema (`SMART_ENTERPRISE/database/init_db.sql`)**: Creates all 8 v2 tables (`customers`, `service_requests`, `request_status_history`, `customer_feedbacks`, `notification_outbox`, `notification_attempts`, `audit_events`, `telegram_inbox`), analytical views (`v_requests_analytics`, `v_feedback_analytics`, `v_outbox_telemetry`), and the backward-compatible legacy view `real_estate_requests` with its `INSTEAD OF INSERT` trigger (`insert_real_estate_request_legacy()`).
+- **Idempotent Migration (`SMART_ENTERPRISE/database/schema_v2.sql`)**: Safely migrates legacy `real_estate_requests` tables into normalized v2 tables using `SELECT DISTINCT ON (phone)` customer deduplication and `ON CONFLICT (source_row_id) DO NOTHING`, and can be re-executed repeatedly with zero errors.
+
+---
+
+## 10. Notification Outbox Lifecycle
+
+1. **Enqueue (`PENDING`)**: Created inside the same database transaction as `ServiceRequest`.
+2. **Claim (`PROCESSING`)**: Claimed atomically via `SELECT ... FOR UPDATE SKIP LOCKED` and compare-and-swap update with a 300-second lease timeout.
+3. **Dispatch**:
+   - `mock` mode: Transitions to `MOCK_DELIVERED`.
+   - `smtp` mode: Connects via `SMTPTransportAdapter` (`smtplib.SMTP`, STARTTLS, login, `sendmail`) and transitions to `PROVIDER_ACCEPTED` on HTTP/SMTP `250`.
+4. **Retry & Recovery**: Transient errors (`421`, `451`, timeouts, connection refused) increment `retry_count`, record a `NotificationAttempt` row, and schedule `next_retry_at` using exponential backoff ($10\text{s} \times 2^{\text{retry\_count}-1}$). Crashed workers in `PROCESSING` past the lease window are automatically reclaimed.
+5. **Dead-Letter (`FAILED` / `FAILED_PERMANENT`)**: Reached when `retry_count >= max_retries` (default 5).
+
+---
+
+## 11. Telegram & n8n Workflows
+
+All 8 workflow definitions in `SMART_ENTERPRISE/automation/n8n/` are validated by automated contract tests (`tests/unit/test_n8n_workflows_contract.py`):
+- **Single Active Telegram Entrypoint**: `unified_telegram_router.json` (`active: true`) is the sole active Telegram router. Legacy/auxiliary Telegram workflows (`telegram_bot.json`, `ai_agent_rag.json`) have `active: false` to prevent webhook polling conflicts.
+- **Container-Ready Networking**: All workflows use `$env.BUSINESS_API_URL || 'http://business-api:8000'` and `$env.OLLAMA_BASE_URL || 'http://ollama:11434'` with zero hardcoded `127.0.0.1` URLs.
+- **Explicit Demo vs. Connected Dispatch**: `unified_telegram_router.json` routes test webhook traffic (`is_test=true`) to `/api/v1/telegram/mock-dispatcher` and live traffic (`is_test=false`) to `/api/v1/telegram/send-message`.
+
+---
+
+## 12. RAG Architecture & Evaluation
+
+- **Knowledge Base**: 6 source documents in `SMART_ENTERPRISE/ai/knowledge_base/source/` (`Керівництво_з_перевірки_документів.pdf`, `Опис_послуг_агентства.docx`, `Памятка_для_покупця.pdf`, `Порядок_підписання_договору.docx`, `Правила_конфіденційності.pdf`, `Шаблон_договору_оренди.docx`), indexed via `tools/reindex_knowledge_base.py` into 32 deterministic UUIDv5 chunks in Qdrant (`rag_real_estate_active`).
+- **Strict Grounding & Safety**:
+  - `mode="grounded"` is returned **if and only if** Qdrant retrieval succeeds, at least one chunk meets `RAG_MIN_SIMILARITY` (`0.55`), and Ollama generation succeeds.
+  - `confidence_score` is the exact rounded maximum cosine similarity score from Qdrant (`0.0` on abstention, `None` on service fallback).
+  - Retrieved chunks are sanitized via `sanitize_retrieved_chunk()` and wrapped in `<retrieved_evidence>` untrusted data delimiters.
+  - The system prompt explicitly prohibits unlicensed legal representation and includes an informational consultant disclaimer.
+- **30-Question Benchmark (`evaluation/rag_eval_dataset.json` & `evaluation/rag_eval_results.json`)**:
+  - **Recall@K (20 in-domain questions):** `0.9500` (95.0% expected-source recall; 93.33% single-doc, 80.0% multi-doc full coverage)
+  - **Factual Claim Accuracy (Heuristic Proxy):** `0.8000` (80.0% — 16/20 verified against reference claim anchors on un-truncated full text; Q05, Q08, Q15, Q22 missed)
+  - **Abstention Accuracy (10 out-of-domain & adversarial questions):** `1.0000` (10/10 rejected)
+  - **Unnecessary Abstention Rate:** `0.0500` (1/20 questions: Q22)
+  - **Unsupported Answer Rate:** `0.0333` (3.33%).
+  - **Citation Entailment Proxy:** `0.9474` (94.74%; heuristic source/citation proxy, not factual entailment proof).
+  - **Latency/quality trade-off:** quality improved from 20% to 80% multi-document coverage, 85% to 95% Recall@K, and 73.68% to 94.74% citation proxy, while local CPU p95 increased from `34.489s` to `74.635s` (`p50 = 32.191s`).
+  - **Evaluation Cache Safety:** Fresh live execution is default (`reuse_existing_responses=False`); full answers and citation objects preserved; legacy or incompatible cache strictly rejected with `IncompatibleCacheError`.
+
+---
+
+## 13. Monitoring & Grafana Dashboards
+
+Grafana (`SMART_ENTERPRISE/monitoring/`) provisions two datasource integrations (`PostgreSQL Analytics DB` with UID `lab5-postgres` and `Rentkom Core API` with UID `rentkom-core-api`) and two dashboards:
+1. **`real_estate_monitoring.json` (13 Panels)**: Total requests, conversion funnel, requests by status/purpose/property type, average service & realtor ratings, feedback trends, and outbox delivery distribution.
+2. **`enterprise_observability.json` (6 Panels)**: API health status, outbox pending backlog, retry rate, and notification attempt telemetry.
+
+---
+
+## 14. Security Model
+
+- **Authentication & Role Separation (`core/security.py`)**:
+  - Administrative read/status endpoints require `X-Admin-Token` or `Authorization: Bearer <ADMIN_API_KEY>`.
+  - Internal worker and n8n endpoints require `X-Internal-Token` or `ADMIN_API_KEY`.
+  - Missing credentials return `HTTP 401 Unauthorized`; invalid credentials return `HTTP 403 Forbidden` using timing-safe `secrets.compare_digest`.
+  - Unconfigured server keys fail closed with `HTTP 500` and never bypass authentication.
+- **Test Database Protection (`tests/safety.py`)**: All destructive PostgreSQL fixtures require `TEST_DATABASE_URL` pointing to a database explicitly named with `test`, `disposable`, or `temp`, reject application/default databases (`postgres`, `rentkom`, `lab4_real_estate`), and verify/write the `_rentkom_test_safety_marker` table before dropping or truncating tables.
+
+---
+
+## 15. Testing Strategy & Commands
+
+The current suite collects **194 tests** across unit, security, integration, and end-to-end layers. Tests requiring live n8n, PostgreSQL, Qdrant, Ollama, or external providers skip when those explicitly required resources are absent.
 
 ```bash
+# 1. Run unit, security, and workflow contract tests:
+pytest tests/unit -v --tb=short
+
+# 2. Run SMTP transport & Telegram connected-mode contract tests:
+pytest tests/integration/test_smtp_delivery.py tests/integration/test_telegram_connected_mode_contract.py -v --tb=short
+
+# 3. Run the full suite including PostgreSQL integration, migrations, backup/restore, and live RAG:
+# Set TEST_DATABASE_URL to an isolated disposable test database (must contain 'test', 'disposable', or 'temp'):
+export TEST_DATABASE_URL="postgresql+psycopg2://postgres@127.0.0.1:5439/rentkom_test"
 pytest tests/ -v --tb=short
 ```
 
-| Component / Subsystem | Benchmark Metric | Measured Result |
-| :--- | :--- | :--- |
-| **Test Suite** | Total Test Cases | **75 / 75 PASS (100%)** |
-| **Business API** | Health Check Latency | `< 12 ms` |
-| **Customer Deduplication** | Ingestion Resolution | `< 25 ms` |
-| **Transactional Outbox** | Dispatch Latency (Local Mock) | `< 50 ms` |
-| **RAG Retrieval + Generation** | Bounded Generation (`num_predict=384`, Ollama Qwen 3:4b-instruct, consumer host CPU/integrated GPU) | P50 ≈ 33.8 s, P95 ≈ 39.4 s (cold/full context); ~2.8 s (warm single-shot cache) |
-| **Grafana Observability** | Dashboard Metrics Monitored | **26 Panels Across 3 Dashboards** (21 operational panels across 2 core dashboards + 5 baseline panels) |
+---
+
+## 16. Backup & Recovery
+
+Logical PostgreSQL backup and safe disposable-database restore verification are provided by `tools/backup_restore.py` and `tools/manage.py`:
+
+```bash
+# Create logical backup via pg_dump:
+python tools/manage.py backup --db-url "postgresql://postgres@127.0.0.1:5432/rentkom" --output-dir backups
+
+# Verify restore into an isolated test database (protected by assert_safe_test_database):
+python tools/manage.py restore --backup-file backups/rentkom_pg_backup_YYYYMMDD_HHMMSS.sql --target-db-url "postgresql://postgres@127.0.0.1:5439/rentkom_test"
+```
 
 ---
 
-## 🔒 8. Security & Boundaries
+## 17. Operational Boundaries & Known Limitations
 
-- **Separation of Modes**: Demo mode operates strictly with mocked dispatchers and synthetic test tokens. Connected mode activates live Telegram webhook routing and external SMTP only when credentials are provided in `.env`.
-- **Zero-Secret Workflows**: Workflow definitions in `SMART_ENTERPRISE/automation/n8n/` contain no embedded tokens or passwords. Microservice authorization uses n8n Header Authentication (`RentkomInternalAuth`).
-- **Anonymized Synthetic Data**: All demo and fixture datasets contain purely synthetic names, addresses, and phone numbers.
-- **Prompt Injection Defense**: Pre-retrieval pattern matching catches adversarial jailbreaks and unauthorized system prompt overrides before hitting LLM compute.
-- **Container Evaluation Credentials**: In `compose.yaml`, standard default credentials (`postgres:postgres`, `admin:admin`) and open port forwardings are configured for isolated local developer evaluation and portfolio demonstration. For production deployment, bind ports to `127.0.0.1` and override credentials via `.env`.
-
----
-
-## 📋 9. Known Limitations & Operational Boundaries
-
-> [!WARNING]
-> **Operational Verification Status**:
-> - **Docker Clean-Room**: **`NOT VERIFIED`** on local development host (Windows Docker Engine named pipe inactive). The `compose.yaml` and multi-stage `Dockerfile` are syntactically validated and tested against Compose v2 schema, but isolated clean-room container runs remain to be verified once Docker Desktop daemon is started.
-> - **Connected Mode**: **`Credentials Required`**. Live Telegram bot responses, external Google Forms / Sheets synchronization, and real SMTP email delivery require user-supplied credentials in `.env` (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `SMTP_HOST`, `SMTP_PASSWORD`).
-> - **Demo Mode**: **`AUTONOMOUS & VERIFIED`**. All business scenarios, customer deduplication, transactional outbox processing, RAG legal assistance, and dual Grafana dashboards operate 100% autonomously without external API keys or cloud dependencies.
-
-- **Roadmap**:
-  - OpenTelemetry distributed tracing across n8n and FastAPI.
-  - Multi-tenant real estate agency support.
-  - Fine-tuned Ukrainian real-estate SLM for sub-second offline edge inference.
+1. **n8n image security**: `Dockerfile.n8n` derives from the exact official n8n 2.46.5 digest and upgrades only native `brotli-libs` to the vendor-fixed `1.2.1-r0`. Trivy 0.67.2 reports zero applicable unfixed CRITICAL OS or Node.js findings in the resulting image. CI rebuilds and scans this image without an ignore rule.
+2. **External Provider Credentials**: Live Telegram Bot API (`sendMessage`) and commercial corporate SMTP relay delivery require user-supplied credentials in `.env` or a production vault. The local provider-compatible contract passes; external Telegram delivery remains BLOCKED when those credentials are absent.
+3. **Local LLM CPU Latency**: The accepted quality improvements increased measured p95 from `34.489s` to `74.635s`. This is a documented performance regression; GPU acceleration and capacity testing remain deployment prerequisites for latency-sensitive production use.
+4. **Public & RAG Rate Limiting**: Anonymous ingress (`POST /api/v1/requests/`, `POST /api/v1/feedbacks/`, 60 req/min) and neural RAG inference (`POST /api/v1/rag/ask`, 10 req/min) are protected by in-memory sliding-window rate limiters (HTTP 429). Client IP resolution enforces `TRUSTED_PROXIES` before honoring `X-Forwarded-For`. In multi-process horizontal deployments, Redis-backed rate limiting should be enabled in front of the platform.
 
 ---
 
-## 📄 License
+## 18. Audit & Verification Reports
 
-Distributed under the MIT License. See [LICENSE](LICENSE) for more information.
+Detailed engineering acceptance evidence is maintained under [`docs/audit/`](docs/audit/):
+- [`RECOVERY_BASELINE.md`](docs/audit/RECOVERY_BASELINE.md) — Pre-flight git, environment, and worktree baseline
+- [`BASELINE_FINDINGS.md`](docs/audit/BASELINE_FINDINGS.md) — Initial defect inventory and root-cause analysis
+- [`REMEDIATION_MATRIX.md`](docs/audit/REMEDIATION_MATRIX.md) — Complete defect-to-test remediation tracking matrix
+- [`SECURITY_REVIEW.md`](docs/audit/SECURITY_REVIEW.md) — Endpoint authorization matrix, secret scan, and test safety review
+- [`DATABASE_ACCEPTANCE.md`](docs/audit/DATABASE_ACCEPTANCE.md) — PostgreSQL 18 bootstrap, migration idempotency, concurrency, and backup/restore proof
+- [`INTEGRATION_ACCEPTANCE.md`](docs/audit/INTEGRATION_ACCEPTANCE.md) — SMTP transport, Telegram connected mode, and n8n workflow contract verification
+- [`RAG_EVALUATION.md`](docs/audit/RAG_EVALUATION.md) — 30-question live RAG evaluation metrics and grounding verification
+- [`DOCKER_CLEANROOM_ACCEPTANCE.md`](docs/audit/DOCKER_CLEANROOM_ACCEPTANCE.md) — Docker Compose profile validation and host daemon status
+- [`TEST_EVIDENCE.md`](docs/audit/TEST_EVIDENCE.md) — Full test execution logs and assertion inventory
+- [`REMAINING_RISKS.md`](docs/audit/REMAINING_RISKS.md) — Residual operational risks and mitigations
+- [`FINAL_DEFECT_ACCEPTANCE.md`](docs/audit/FINAL_DEFECT_ACCEPTANCE.md) — Remediation matrix and verified evidence for all 20 defect findings (SEC, NOTIF, INT, DATA, OPS, RAG, QA, DOC)
+- [`FINAL_ENGINEERING_REVIEW.md`](docs/audit/FINAL_ENGINEERING_REVIEW.md) — Final engineering scorecard and readiness verdict
+
+---
+
+## 19. License
+
+Distributed under the MIT License. See [`LICENSE`](LICENSE) for more information.

@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 from datetime import datetime, timezone, timedelta, date
@@ -5,6 +6,7 @@ import pytest
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
+from tests.safety import assert_safe_test_database, ensure_test_schema_marker
 
 from core.models import (
     Base, Customer, ServiceRequest, RequestStatusHistory,
@@ -13,17 +15,36 @@ from core.models import (
 from core.services.request_service import normalize_phone
 from core.services.outbox_service import process_outbox
 
-POSTGRES_TEST_URL = "postgresql+psycopg2://postgres@127.0.0.1:5433/postgres"
 
 @pytest.fixture(scope="module")
 def pg_engine():
-    # Connect to isolated real PostgreSQL 18 instance running on port 5433
-    engine = create_engine(POSTGRES_TEST_URL, pool_pre_ping=True, isolation_level="AUTOCOMMIT")
+    postgres_test_url = os.getenv("TEST_DATABASE_URL")
+    if not postgres_test_url:
+        pytest.skip(
+            "TEST_DATABASE_URL not configured. Set TEST_DATABASE_URL pointing to an isolated "
+            "test database (e.g. postgresql://.../rentkom_test) to execute real PostgreSQL integration tests."
+        )
+
+    # Enforce strict database safety check before initiating connection
+    assert_safe_test_database(postgres_test_url)
+
+    try:
+        engine = create_engine(postgres_test_url, pool_pre_ping=True, isolation_level="AUTOCOMMIT")
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1;"))
+        ensure_test_schema_marker(engine)
+    except RuntimeError:
+        raise
+    except Exception as e:
+        pytest.skip(f"Could not connect to PostgreSQL test database at '{postgres_test_url}': {e}")
+
     yield engine
     engine.dispose()
 
 @pytest.fixture(scope="function")
 def clean_pg_schema(pg_engine):
+    # Re-verify safety guard and schema marker before executing any schema mutations
+    ensure_test_schema_marker(pg_engine)
     with pg_engine.connect() as conn:
         for drop_stmt in [
             "DROP VIEW IF EXISTS real_estate_requests CASCADE;",
@@ -245,9 +266,12 @@ def test_real_postgres_outbox_concurrency_skip_locked(clean_pg_schema):
     def worker_job(worker_id):
         worker_db = Session()
         try:
-            # batch_size=5 so each worker grabs 5 items concurrently
-            res = process_outbox(worker_db, batch_size=5)
-            results.append((worker_id, res))
+            # batch_size=5 so each worker grabs up to 5 items per pass until queue is drained
+            while True:
+                res = process_outbox(worker_db, batch_size=5)
+                results.append((worker_id, res))
+                if res.processed_count == 0:
+                    break
         finally:
             worker_db.close()
 

@@ -1,4 +1,5 @@
 import time
+import hashlib
 import logging
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends, Header, Request
@@ -9,6 +10,13 @@ from core.services.rag_service import query_rag
 from core.services.telegram_idempotency import telegram_idempotency, CachedResponse
 import httpx
 from core.config import settings
+from core.security import (
+    constant_time_equals,
+    get_effective_internal_key,
+    get_effective_test_secret,
+    _extract_bearer,
+    check_public_rate_limit,
+)
 from core.schemas import (
     TelegramInboxGuardRequest,
     TelegramInboxGuardResponse,
@@ -22,9 +30,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
 class TelegramUpdateMock(BaseModel):
     update_id: Optional[int] = None
     message: Dict[str, Any]
+
 
 class TelegramResponseMock(BaseModel):
     route: str
@@ -33,6 +43,7 @@ class TelegramResponseMock(BaseModel):
     sources: Optional[list] = None
     confidence_score: Optional[float] = None
     is_duplicate: bool = False
+
 
 START_MENU_TEXT = """Вітаємо у чат-боті агентства нерухомості «Рентком» (м. Львів)!
 Оберіть потрібний розділ меню або введіть будь-яке запитання щодо нерухомості."""
@@ -51,6 +62,7 @@ RENT_SERVICES_TEXT = """🔑 Послуги для орендодавців:
 - Супровід передачі об'єкта та складання опису майна."""
 
 FALLBACK_TEXT = "Вибачте, сервіс консультацій тимчасово недоступний. Будь ласка, зверніться до нашого чергового рієлтора за телефоном +38 (032) 240-00-00."
+
 
 async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Session] = None) -> TelegramResponseMock:
     """
@@ -78,7 +90,6 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
 
     message = update.message or {}
     text_content = (message.get("text") or "").strip()
-    chat_id = (message.get("chat") or {}).get("id", 0)
 
     try:
         # 1. Start Menu Route
@@ -126,7 +137,7 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
                 res = TelegramResponseMock(
                     route="Fallback Service",
                     response_text=FALLBACK_TEXT,
-                    confidence_score=0.5
+                    confidence_score=0.0
                 )
 
         # Persist completion state in DB Inbox & memory
@@ -153,15 +164,58 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
         )
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/webhook-mock", response_model=TelegramResponseMock)
-async def telegram_webhook_mock(update: TelegramUpdateMock, db: Session = Depends(get_db)):
-    """Mock testing endpoint for Unified Telegram Router."""
+async def telegram_webhook_mock(
+    update: TelegramUpdateMock,
+    db: Session = Depends(get_db),
+    _rate_limit: None = Depends(check_public_rate_limit),
+):
+    """Mock testing endpoint for Unified Telegram Router (Demo/Test environment only)."""
+    if not settings.is_test_webhook_permitted:
+        raise HTTPException(
+            status_code=403,
+            detail="Mock Telegram webhook is disabled in production mode or when ALLOW_TEST_WEBHOOK is false."
+        )
     return await process_telegram_update(update, db=db)
 
+
 @router.post("/webhook", response_model=TelegramResponseMock)
-async def telegram_webhook(update: TelegramUpdateMock, db: Session = Depends(get_db)):
-    """Production ingress endpoint for Unified Telegram Router."""
+async def telegram_webhook(
+    update: TelegramUpdateMock,
+    x_telegram_bot_api_secret_token: Optional[str] = Header(None, alias="X-Telegram-Bot-Api-Secret-Token"),
+    x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    db: Session = Depends(get_db),
+    _rate_limit: None = Depends(check_public_rate_limit),
+):
+    """Production ingress endpoint for Unified Telegram Router with webhook secret verification."""
+    tg_secret = settings.TELEGRAM_SECRET_TOKEN
+    if not settings.is_safe_demo_or_dev or tg_secret:
+        if not tg_secret:
+            raise HTTPException(
+                status_code=500,
+                detail="Server security misconfiguration: TELEGRAM_SECRET_TOKEN is not configured."
+            )
+        if not x_telegram_bot_api_secret_token:
+            internal_key = get_effective_internal_key()
+            bearer = _extract_bearer(authorization)
+            internal_candidate = x_internal_token or bearer
+            if internal_key and internal_candidate and constant_time_equals(internal_candidate, internal_key):
+                pass
+            else:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Unauthorized: missing X-Telegram-Bot-Api-Secret-Token or internal service token."
+                )
+        elif not constant_time_equals(x_telegram_bot_api_secret_token, tg_secret):
+            raise HTTPException(
+                status_code=403,
+                detail="Forbidden: invalid Telegram webhook secret token."
+            )
+
     return await process_telegram_update(update, db=db)
+
 
 @router.post("/inbox/guard", response_model=TelegramInboxGuardResponse)
 async def acquire_telegram_inbox_guard(
@@ -177,42 +231,48 @@ async def acquire_telegram_inbox_guard(
     Protects test webhooks against unauthorized execution or production abuse.
     Supports trusted internal service authentication in connected/production mode.
     """
-    # 1. Gate 3 & Security Check: Test Webhook vs Connected Ingress
+    test_secret = get_effective_test_secret()
+    internal_key = get_effective_internal_key()
+
     if guard_req.is_test:
         if not settings.is_test_webhook_permitted:
             raise HTTPException(
                 status_code=403,
                 detail="Test webhook ingress is disabled in production/connected mode or unpermitted environment."
             )
-        if not settings.TEST_WEBHOOK_SECRET:
+        if not test_secret:
             raise HTTPException(
                 status_code=500,
                 detail="Server security misconfiguration: TEST_WEBHOOK_SECRET is not configured."
             )
-        # Exclusively authenticate via HTTP Header (rejecting URL/body parameters)
-        if not x_test_token or x_test_token != settings.TEST_WEBHOOK_SECRET:
+        if not x_test_token:
             raise HTTPException(
                 status_code=401,
-                detail="Unauthorized: invalid or missing X-Test-Token HTTP header."
+                detail="Unauthorized: missing X-Test-Token HTTP header."
+            )
+        if not constant_time_equals(x_test_token, test_secret):
+            raise HTTPException(
+                status_code=403,
+                detail="Forbidden: invalid X-Test-Token HTTP header."
             )
     else:
-        # Legitimate incoming update in Connected Mode / Production
-        # In connected or production environments, enforce trusted internal service authorization
-        if not settings.is_safe_demo_or_dev:
-            if not settings.INTERNAL_API_KEY:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Server security misconfiguration: INTERNAL_API_KEY is not configured in connected mode."
-                )
-            bearer = ""
-            if authorization and authorization.lower().startswith("bearer "):
-                bearer = authorization[7:].strip()
-            token = x_internal_token or bearer
-            if not token or token != settings.INTERNAL_API_KEY:
-                raise HTTPException(
-                    status_code=401,
-                    detail="Unauthorized: invalid or missing internal service authorization."
-                )
+        if not internal_key:
+            raise HTTPException(
+                status_code=500,
+                detail="Server security misconfiguration: INTERNAL_API_KEY is not configured."
+            )
+        bearer = _extract_bearer(authorization)
+        token = x_internal_token or bearer
+        if not token:
+            raise HTTPException(
+                status_code=401,
+                detail="Unauthorized: missing internal service authorization."
+            )
+        if not constant_time_equals(token, internal_key):
+            raise HTTPException(
+                status_code=403,
+                detail="Forbidden: invalid internal service authorization."
+            )
 
     # 2. Extract message parameters
     msg = guard_req.message or (guard_req.body.get("message") if guard_req.body else None) or {}
@@ -228,7 +288,6 @@ async def acquire_telegram_inbox_guard(
         }
     }
 
-    # If update_id was omitted in test, generate synthetic deterministic update_id
     update_id, clean_chat_id, clean_text = telegram_idempotency.parse_update_id(update_data)
     event_key = f"tg_update:{update_id}"
 
@@ -260,14 +319,55 @@ async def acquire_telegram_inbox_guard(
         cached_response=None
     )
 
+
 @router.post("/inbox/complete")
 async def complete_telegram_inbox(
     req: TelegramInboxCompleteRequest,
+    x_test_token: Optional[str] = Header(None, alias="X-Test-Token"),
+    x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
     db: Session = Depends(get_db)
 ):
     """
     Marks the Telegram update as COMPLETED in public.telegram_inbox and records response payload.
+    Enforces internal/test authorization in connected/production mode.
     """
+    test_secret = get_effective_test_secret()
+    internal_key = get_effective_internal_key()
+    bearer = _extract_bearer(authorization)
+    internal_token = x_internal_token or bearer
+
+    if not settings.is_safe_demo_or_dev:
+        if not internal_key:
+            raise HTTPException(
+                status_code=500,
+                detail="Server security misconfiguration: INTERNAL_API_KEY is not configured."
+            )
+        if not internal_token:
+            raise HTTPException(
+                status_code=401,
+                detail="Unauthorized: missing internal service authorization."
+            )
+        if not constant_time_equals(internal_token, internal_key):
+            raise HTTPException(
+                status_code=403,
+                detail="Forbidden: invalid internal service authorization."
+            )
+    else:
+        if not (x_test_token or internal_token):
+            raise HTTPException(
+                status_code=401,
+                detail="Unauthorized: missing X-Test-Token or X-Internal-Token HTTP header."
+            )
+        if not (
+            (x_test_token and test_secret and constant_time_equals(x_test_token, test_secret))
+            or (internal_token and internal_key and constant_time_equals(internal_token, internal_key))
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Forbidden: invalid token provided to /inbox/complete."
+            )
+
     event_key = f"tg_update:{req.update_id}"
     cached = CachedResponse(
         route=req.route,
@@ -287,7 +387,9 @@ async def complete_telegram_inbox(
     )
     return {"status": "SUCCESS", "update_id": req.update_id}
 
+
 @router.post("/mock-dispatcher", response_model=TelegramMockDispatchResponse)
+@router.post("/dispatch-mock", response_model=TelegramMockDispatchResponse, include_in_schema=False)
 async def dispatch_telegram_mock(
     request: Request,
     dispatch_req: TelegramMockDispatchRequest,
@@ -295,34 +397,38 @@ async def dispatch_telegram_mock(
     x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
-    if not settings.is_safe_demo_or_dev:
+    if not settings.is_test_webhook_permitted:
         raise HTTPException(
             status_code=403,
-            detail="Mock Telegram Dispatcher is disabled in production/connected mode."
+            detail="Mock Telegram Dispatcher is disabled in production mode or when ALLOW_TEST_WEBHOOK is false."
         )
-    bearer = ""
-    if authorization and authorization.lower().startswith("bearer "):
-        bearer = authorization[7:].strip()
+    bearer = _extract_bearer(authorization)
     internal_token = x_internal_token or bearer
 
-    is_valid_test = bool(x_test_token and settings.TEST_WEBHOOK_SECRET and x_test_token == settings.TEST_WEBHOOK_SECRET)
-    is_valid_internal = bool(
-        internal_token and (
-            (settings.INTERNAL_API_KEY and internal_token == settings.INTERNAL_API_KEY) or
-            (settings.is_safe_demo_or_dev and internal_token == "rentkom-demo-internal-secret-token-2026")
-        )
-    )
+    test_secret = get_effective_test_secret()
+    internal_key = get_effective_internal_key()
 
-    if not (is_valid_test or is_valid_internal):
+    is_valid_test = bool(x_test_token and test_secret and constant_time_equals(x_test_token, test_secret))
+    is_valid_internal = bool(internal_token and internal_key and constant_time_equals(internal_token, internal_key))
+
+    if not (x_test_token or internal_token):
         raise HTTPException(
             status_code=401,
-            detail="Unauthorized: missing or invalid X-Test-Token or X-Internal-Token HTTP header."
+            detail="Unauthorized: missing X-Test-Token or X-Internal-Token HTTP header."
+        )
+    if not (is_valid_test or is_valid_internal):
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: invalid X-Test-Token or X-Internal-Token HTTP header."
         )
     logger.info(f"[TELEGRAM-DISPATCHER] Dispatched mock message to chat {dispatch_req.chat_id} (text len={len(dispatch_req.text)})")
+
+    # Deterministic SHA-256 offset for message ID (no process-randomized hash)
+    msg_id_offset = int(hashlib.sha256(dispatch_req.text.encode("utf-8")).hexdigest()[:6], 16) % 900
     return TelegramMockDispatchResponse(
         ok=True,
         result={
-            "message_id": 99900 + (abs(hash(dispatch_req.text)) % 900),
+            "message_id": 99900 + msg_id_offset,
             "date": int(time.time()),
             "chat": {
                 "id": dispatch_req.chat_id,
@@ -333,6 +439,7 @@ async def dispatch_telegram_mock(
         },
         delivery_mode="INTEGRATION_TESTED"
     )
+
 
 @router.post("/send-message")
 async def send_telegram_real_message(
@@ -355,19 +462,23 @@ async def send_telegram_real_message(
         )
 
     # 2. Authenticate internal caller
-    if not settings.INTERNAL_API_KEY:
+    internal_key = get_effective_internal_key()
+    if not internal_key:
         raise HTTPException(
             status_code=500,
             detail="Server security misconfiguration: INTERNAL_API_KEY is not configured."
         )
-    bearer = ""
-    if authorization and authorization.lower().startswith("bearer "):
-        bearer = authorization[7:].strip()
+    bearer = _extract_bearer(authorization)
     token = x_internal_token or bearer
-    if not token or token != settings.INTERNAL_API_KEY:
+    if not token:
         raise HTTPException(
             status_code=401,
-            detail="Unauthorized: invalid or missing internal service authorization."
+            detail="Unauthorized: missing internal service authorization."
+        )
+    if not constant_time_equals(token, internal_key):
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: invalid internal service authorization."
         )
 
     # 3. Verify real bot credentials
@@ -394,19 +505,20 @@ async def send_telegram_real_message(
                 json=payload
             )
             if resp.status_code != 200:
-                logger.error(f"[TELEGRAM REAL] Dispatch failed ({resp.status_code}): {resp.text}")
+                logger.error(f"[TELEGRAM REAL] Dispatch failed ({resp.status_code})")
                 raise HTTPException(
-                    status_code=resp.status_code,
-                    detail=f"Upstream Telegram API error: {resp.text}"
+                    status_code=502,
+                    detail=f"Upstream Telegram API error (HTTP {resp.status_code})"
                 )
             return {
                 "ok": True,
                 "result": resp.json().get("result"),
+                "mode": "LIVE_TELEGRAM",
                 "delivery_mode": "PROVIDER_ACCEPTED"
             }
     except httpx.RequestError as exc:
-        logger.error(f"[TELEGRAM REAL] Network error during dispatch: {exc}")
+        logger.error(f"[TELEGRAM REAL] Network error during dispatch: {type(exc).__name__}")
         raise HTTPException(
             status_code=502,
-            detail=f"Bad Gateway: unable to reach Telegram API ({str(exc)})"
+            detail=f"Bad Gateway: Telegram API transport failure ({type(exc).__name__})"
         )

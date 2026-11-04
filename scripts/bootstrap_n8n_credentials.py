@@ -12,10 +12,11 @@ import subprocess
 from pathlib import Path
 
 # Load settings from core.config if available
-internal_key = None
+internal_key = os.getenv("INTERNAL_API_KEY", "")
 try:
     from core.config import settings
-    internal_key = settings.INTERNAL_API_KEY
+    if not internal_key:
+        internal_key = settings.INTERNAL_API_KEY
 except Exception:
     pass
 
@@ -24,8 +25,10 @@ if not internal_key:
 
 def bootstrap_credentials():
     print(f"[*] Bootstrapping n8n credentials via official n8n CLI...")
-    if not internal_key:
-        print("[!] Error: INTERNAL_API_KEY environment variable is not set. Please set it in .env or pass it via environment.")
+    test_secret = os.getenv("TEST_WEBHOOK_SECRET", "")
+    telegram_secret = os.getenv("TELEGRAM_SECRET_TOKEN", "")
+    if not internal_key or not test_secret or not telegram_secret:
+        print("[!] Error: INTERNAL_API_KEY, TEST_WEBHOOK_SECRET, and TELEGRAM_SECRET_TOKEN must all be set.")
         sys.exit(1)
 
     # Credential definition conforming to n8n httpHeaderAuth schema
@@ -38,9 +41,25 @@ def bootstrap_credentials():
                 "name": "X-Internal-Token",
                 "value": internal_key
             }
-        }
+        },
+        {
+            "id": "RentkomTestWebhookSecret",
+            "name": "Rentkom Test Webhook Secret",
+            "type": "httpHeaderAuth",
+            "data": {"name": "X-Test-Token", "value": test_secret},
+        },
+        {
+            "id": "RentkomTelegramWebhookSecret",
+            "name": "Rentkom Telegram Webhook Secret",
+            "type": "httpHeaderAuth",
+            "data": {
+                "name": "X-Telegram-Bot-Api-Secret-Token",
+                "value": telegram_secret,
+            },
+        },
     ]
 
+    container = os.getenv("N8N_CONTAINER", "rentkom-n8n")
     # Write to a secured temporary file
     temp_dir = tempfile.mkdtemp(prefix="n8n_bootstrap_")
     temp_file = os.path.join(temp_dir, "credentials.json")
@@ -49,14 +68,21 @@ def bootstrap_credentials():
         with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(cred_payload, f, indent=2)
 
-        # Execute official n8n CLI command
-        # On Windows shell=True allows npx resolution
-        cmd = ["npx", "--no-install", "n8n", "import:credentials", f"--input={temp_file}"]
-        print(f"[*] Running CLI: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, shell=True, timeout=60)
+        container_file = "/tmp/rentkom-credentials.json"
+        copy_result = subprocess.run(
+            ["docker", "cp", temp_file, f"{container}:{container_file}"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if copy_result.returncode != 0:
+            print(copy_result.stderr or copy_result.stdout)
+            return False
+        cmd = ["docker", "exec", container, "n8n", "import:credentials", f"--input={container_file}"]
+        print(f"[*] Importing credentials inside container {container}.")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        subprocess.run(["docker", "exec", container, "rm", "-f", container_file], capture_output=True, timeout=15)
 
         if result.returncode == 0:
-            print("[+] Successfully imported RentkomInternalAuth into n8n!")
+            print("[+] Successfully imported the three Rentkom header credentials into n8n.")
             print(result.stdout.strip())
             return True
         else:

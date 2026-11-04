@@ -1,5 +1,5 @@
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from core.database import get_db
@@ -8,6 +8,27 @@ from core.schemas import HealthResponse
 from core.config import settings
 
 router = APIRouter()
+
+
+@router.get("/health/live")
+async def check_liveness():
+    """Lightweight liveness probe: confirms the FastAPI process is responsive without exposing secrets."""
+    return {"status": "alive", "service": "rentkom-business-api", "version": settings.VERSION}
+
+
+@router.get("/health/ready")
+async def check_readiness(response: Response, db: Session = Depends(get_db)):
+    """
+    Readiness probe: verifies relational database connectivity.
+    Returns HTTP 200 when ready, or HTTP 503 Service Unavailable when database is unreachable.
+    """
+    try:
+        db.execute(text("SELECT 1"))
+        return {"status": "ready", "database": "healthy"}
+    except Exception:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "not_ready", "database": "unhealthy"}
+
 
 @router.get("/health", response_model=HealthResponse)
 async def check_health(db: Session = Depends(get_db)):

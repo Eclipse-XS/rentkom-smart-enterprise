@@ -1,3 +1,5 @@
+from core.config import settings
+
 def test_feedback_submission_and_analytics(client):
     # 1. Submit 2 feedbacks
     fb1 = {
@@ -17,8 +19,8 @@ def test_feedback_submission_and_analytics(client):
     r2 = client.post("/api/v1/feedbacks/", json=fb2)
     assert r2.status_code == 201
 
-    # 2. Query analytics summary
-    analytics_resp = client.get("/api/v1/analytics/summary")
+    # 2. Query analytics summary (requires admin or internal token)
+    analytics_resp = client.get("/api/v1/analytics/summary", headers={"X-Admin-Token": settings.ADMIN_API_KEY})
     assert analytics_resp.status_code == 200
     summary = analytics_resp.json()
     assert summary["total_feedbacks"] == 2

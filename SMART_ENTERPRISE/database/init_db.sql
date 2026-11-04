@@ -97,7 +97,16 @@ CREATE TABLE IF NOT EXISTS public.notification_outbox (
     subject TEXT NOT NULL,
     payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     status TEXT NOT NULL DEFAULT 'PENDING' CHECK (
-        status IN ('PENDING', 'PROCESSING', 'SENT', 'MOCK_DELIVERED', 'PROVIDER_ACCEPTED', 'FAILED')
+        status IN (
+            'PENDING',
+            'PROCESSING',
+            'RETRY_PENDING',
+            'SENT',
+            'MOCK_DELIVERED',
+            'PROVIDER_ACCEPTED',
+            'FAILED',
+            'FAILED_PERMANENT'
+        )
     ),
     retry_count INT NOT NULL DEFAULT 0,
     max_retries INT NOT NULL DEFAULT 5,
@@ -109,7 +118,7 @@ CREATE TABLE IF NOT EXISTS public.notification_outbox (
 
 CREATE INDEX IF NOT EXISTS idx_notification_outbox_pending
     ON public.notification_outbox (status, next_retry_at)
-    WHERE status IN ('PENDING', 'FAILED');
+    WHERE status IN ('PENDING', 'RETRY_PENDING', 'FAILED');
 
 -- 6. Notification Delivery Attempts Audit
 CREATE TABLE IF NOT EXISTS public.notification_attempts (
@@ -155,6 +164,37 @@ CREATE TABLE IF NOT EXISTS public.telegram_inbox (
 CREATE INDEX IF NOT EXISTS idx_telegram_inbox_bot_update ON public.telegram_inbox (bot_id, update_id);
 CREATE INDEX IF NOT EXISTS idx_telegram_inbox_status_locked ON public.telegram_inbox (status, locked_at);
 
+
+-- 8b. Inbound Lead Submissions (Unverified Public Ingress Staging - SEC-01 & SEC-02)
+CREATE TABLE IF NOT EXISTS public.inbound_lead_submissions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    submission_id VARCHAR(36) NOT NULL UNIQUE,
+    intake_channel VARCHAR(50) NOT NULL DEFAULT 'REST_API',
+    external_event_id VARCHAR(255) NULL,
+    payload_hash VARCHAR(64) NOT NULL,
+    full_name VARCHAR(255) NOT NULL,
+    phone VARCHAR(50) NOT NULL,
+    normalized_phone VARCHAR(50) NOT NULL,
+    email VARCHAR(255) NULL,
+    telegram_chat_id BIGINT NULL,
+    request_purpose VARCHAR(50) NOT NULL,
+    property_type VARCHAR(50) NOT NULL,
+    property_location TEXT NOT NULL,
+    consultation_date DATE NOT NULL,
+    additional_comments TEXT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'UNVERIFIED',
+    review_notes TEXT NULL,
+    reviewed_by VARCHAR(100) NULL,
+    reviewed_at TIMESTAMPTZ NULL,
+    promoted_request_id BIGINT NULL REFERENCES public.service_requests(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_inbound_leads_status ON public.inbound_lead_submissions (status);
+CREATE INDEX IF NOT EXISTS idx_inbound_leads_norm_phone ON public.inbound_lead_submissions (normalized_phone);
+CREATE INDEX IF NOT EXISTS idx_inbound_leads_channel_event ON public.inbound_lead_submissions (intake_channel, external_event_id);
+
 -- 9. Backward Compatibility View for LR4 / Legacy Grafana panels
 DO $$
 BEGIN
@@ -164,7 +204,38 @@ BEGIN
           AND table_name = 'real_estate_requests'
           AND table_type = 'BASE TABLE'
     ) THEN
-        ALTER TABLE public.real_estate_requests RENAME TO real_estate_requests_legacy_lr4;
+        -- 1. Insert distinct customers from legacy table (deduplicated strictly by phone)
+        INSERT INTO public.customers (full_name, phone, created_at, updated_at)
+        SELECT DISTINCT ON (phone) full_name, phone, created_at, created_at
+        FROM public.real_estate_requests
+        ORDER BY phone, created_at ASC
+        ON CONFLICT (phone) DO UPDATE
+        SET full_name = EXCLUDED.full_name,
+            updated_at = EXCLUDED.updated_at;
+
+        -- 2. Insert service requests linked to resolved customer_id
+        INSERT INTO public.service_requests (
+            customer_id, request_purpose, property_type, property_location,
+            consultation_date, additional_comments, status, source_channel,
+            source_row_id, created_at, updated_at
+        )
+        SELECT
+            c.id, r.request_purpose, r.property_type, r.property_location,
+            r.consultation_date, r.additional_comments, 'COMPLETED', 'GOOGLE_FORMS',
+            r.source_row_id, r.created_at, r.created_at
+        FROM public.real_estate_requests r
+        JOIN public.customers c ON c.phone = r.phone
+        ON CONFLICT (source_row_id) DO NOTHING;
+
+        -- 3. Safely archive legacy table so the view name can be bound
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'real_estate_requests_legacy_lr4'
+        ) THEN
+            ALTER TABLE public.real_estate_requests RENAME TO real_estate_requests_legacy_lr4;
+        ELSE
+            EXECUTE 'ALTER TABLE public.real_estate_requests RENAME TO real_estate_requests_legacy_lr4_' || to_char(CURRENT_TIMESTAMP, 'YYYYMMDD_HH24MISS');
+        END IF;
     END IF;
 END $$;
 
@@ -183,7 +254,7 @@ SELECT
 FROM public.service_requests r
 JOIN public.customers c ON c.id = r.customer_id;
 
--- 8.1 INSTEAD OF INSERT Trigger for Complete Legacy Compatibility
+-- 9.1 INSTEAD OF INSERT Trigger for Complete Legacy Compatibility
 CREATE OR REPLACE FUNCTION public.trg_real_estate_requests_insert()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -217,7 +288,7 @@ CREATE TRIGGER trg_instead_of_insert_real_estate_requests
 INSTEAD OF INSERT ON public.real_estate_requests
 FOR EACH ROW EXECUTE FUNCTION public.trg_real_estate_requests_insert();
 
--- 8.2 Supported Stored Function for Legacy LR4 Ingress (Idempotent ON CONFLICT replacement)
+-- 9.2 Supported Stored Function for Legacy LR4 Ingress (Idempotent ON CONFLICT replacement)
 DROP FUNCTION IF EXISTS public.insert_real_estate_request_legacy;
 CREATE OR REPLACE FUNCTION public.insert_real_estate_request_legacy(
     p_full_name TEXT,
@@ -286,7 +357,7 @@ BEGIN
     )
     VALUES (
         'EMAIL',
-        COALESCE((SELECT email FROM public.customers WHERE customers.id = v_customer_id), 'kanaleclipse@gmail.com'),
+        COALESCE((SELECT email FROM public.customers WHERE customers.id = v_customer_id), 'admin@rentkom.lviv.ua'),
         'Нова заявка на консультацію - ' || p_full_name,
         jsonb_build_object(
             'request_id', v_request_id,
@@ -319,27 +390,21 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 9. Seed Baseline Historical Records (LR4 verified data)
-INSERT INTO public.customers (full_name, phone, created_at, updated_at) VALUES
-('Олексій Мельник', '+380671112233', '2026-10-18 10:15:00+03', '2026-10-18 10:15:00+03'),
-('Ірина Ковальчук', '+380502223344', '2026-10-19 11:20:00+03', '2026-10-19 11:20:00+03'),
-('Маркіян Дуб', '+380933334455', '2026-10-20 14:00:00+03', '2026-10-20 14:00:00+03'),
-('Софія Бойко', '+380674445566', '2026-10-21 16:45:00+03', '2026-10-21 16:45:00+03'),
-('Василь Гончарук', '+380689998877', '2026-10-22 10:29:16+03', '2026-10-22 10:29:16+03')
-ON CONFLICT (phone) DO NOTHING;
+-- 10. Role and Privilege Separation (DATA-05)
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'rentkom_app') THEN
+        GRANT USAGE ON SCHEMA public TO rentkom_app;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO rentkom_app;
+        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO rentkom_app;
+    END IF;
 
-INSERT INTO public.service_requests (customer_id, request_purpose, property_type, property_location, consultation_date, additional_comments, status, source_channel, source_row_id, created_at, updated_at)
-SELECT c.id, d.request_purpose, d.property_type, d.property_location, d.consultation_date::date, d.additional_comments, d.status, d.source_channel, d.source_row_id, d.created_at::timestamptz, d.updated_at::timestamptz
-FROM (VALUES
-    ('+380671112233', 'Хочу купити', 'Квартира', 'Франківський р-н, вул. Генерала Чупринки', '2026-10-20', 'Потрібен 2-кімнатний варіант біля Політехніки', 'COMPLETED', 'GOOGLE_FORMS', '1sPj...:Лист1:2', '2026-10-18 10:15:00+03', '2026-10-18 10:15:00+03'),
-    ('+380502223344', 'Хочу орендувати', 'Квартира', 'Сихівський р-н, проспект Червоної Калини', '2026-10-21', 'Оренда для сім''ї, довгостроково', 'COMPLETED', 'GOOGLE_FORMS', '1sPj...:Лист1:3', '2026-10-19 11:20:00+03', '2026-10-19 11:20:00+03'),
-    ('+380933334455', 'Хочу продати', 'Будинок', 'Личаківський р-н, Винники', '2026-10-22', 'Терміновий продаж будинку 150 кв.м', 'COMPLETED', 'GOOGLE_FORMS', '1sPj...:Лист1:4', '2026-10-20 14:00:00+03', '2026-10-20 14:00:00+03'),
-    ('+380674445566', 'Хочу здати в оренду', 'Квартира', 'Галицький р-н, площа Ринок', '2026-10-23', 'Квартира з ремонтом під подобову/довгострокову', 'COMPLETED', 'GOOGLE_FORMS', '1sPj...:Лист1:5', '2026-10-21 16:45:00+03', '2026-10-21 16:45:00+03'),
-    ('+380689998877', 'Хочу купити', 'Квартира', 'м. Львів, Шевченківський р-н', '2026-10-24', 'Консультація щодо купівлі нерухомості', 'COMPLETED', 'GOOGLE_FORMS', '1sPj...:Лист1:6', '2026-10-22 10:29:16+03', '2026-10-22 10:29:16+03')
-) AS d(phone, request_purpose, property_type, property_location, consultation_date, additional_comments, status, source_channel, source_row_id, created_at, updated_at)
-JOIN public.customers c ON c.phone = d.phone
-ON CONFLICT (source_row_id) DO NOTHING;
-
+    IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'rentkom_n8n') THEN
+        GRANT USAGE ON SCHEMA public TO rentkom_n8n;
+        GRANT SELECT, INSERT, UPDATE ON public.telegram_inbox TO rentkom_n8n;
+        GRANT SELECT ON public.customer_feedbacks TO rentkom_n8n;
+    END IF;
+END $$;
 -- Grant permissions to lab4_user if exists
 DO $$
 BEGIN

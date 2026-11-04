@@ -1,0 +1,15 @@
+FROM alpine:3.24 AS apk-tools
+RUN mkdir /packages \
+    && wget -qO /packages/brotli-libs-1.2.1-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/brotli-libs-1.2.1-r0.apk \
+    && echo '62a7e37e43bbfc1f8525a00ad2125fd5897135dc93b849733884cb78ffd8e26c  /packages/brotli-libs-1.2.1-r0.apk' | sha256sum -c -
+
+FROM n8nio/n8n:2.46.5@sha256:2c99b0700dc0ebc89ff56d045499e0a7e16619d96a1360bc0de0b3750fbdcc1a
+USER root
+COPY --from=apk-tools /sbin/apk /sbin/apk
+COPY --from=apk-tools /usr/lib/libapk.so.3.0.0 /tmp/apk-libs/libapk.so.3.0.0
+COPY --from=apk-tools /usr/lib/libssl.so.3 /tmp/apk-libs/libssl.so.3
+COPY --from=apk-tools /usr/lib/libcrypto.so.3 /tmp/apk-libs/libcrypto.so.3
+COPY --from=apk-tools /packages/brotli-libs-1.2.1-r0.apk /tmp/brotli-libs.apk
+RUN LD_LIBRARY_PATH=/tmp/apk-libs apk add --no-cache --allow-untrusted /tmp/brotli-libs.apk \
+    && rm -rf /sbin/apk /tmp/apk-libs /tmp/brotli-libs.apk
+USER node

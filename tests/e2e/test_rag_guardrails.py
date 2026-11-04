@@ -21,4 +21,8 @@ async def test_rag_fallback_offline_graceful():
     res = await query_rag("Які документи потрібні для оренди квартири?")
     assert res.mode in ["grounded", "fallback"]
     assert len(res.answer) > 20
-    assert len(res.sources) >= 1
+    if res.mode == "grounded":
+        assert len(res.sources) >= 1
+    else:
+        assert res.sources == []
+        assert res.confidence_score == 0.0

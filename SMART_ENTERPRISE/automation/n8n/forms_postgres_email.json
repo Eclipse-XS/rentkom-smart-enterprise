@@ -53,7 +53,7 @@
     },
     {
       "parameters": {
-        "sendTo": "kanaleclipse@gmail.com",
+        "sendTo": "admin@rentkom.lviv.ua",
         "subject": "=Нова заявка на консультацію - {{ $json.full_name }}",
         "emailType": "text",
         "message": "=Отримано нову заявку агентства нерухомості.\n\nПІБ: {{ $json.full_name }}\nТелефон: {{ $json.phone }}\nЦіль запиту: {{ $json.request_purpose }}\nТип нерухомості: {{ $json.property_type }}\nМісцезнаходження: {{ $json.property_location }}\nДата консультації: {{ DateTime.fromISO($json.consultation_date).setZone('Europe/Kyiv').toFormat('dd.MM.yyyy') }}\nКоментар: {{ $json.additional_comments || 'Немає' }}\nID запису: {{ $json.id }}\nДжерело: {{ $json.source_row_id }}",

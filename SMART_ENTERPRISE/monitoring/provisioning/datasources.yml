@@ -5,19 +5,23 @@ datasources:
     uid: lab5-postgres
     type: postgres
     access: proxy
-    url: "127.0.0.1:5432"
-    user: "lab4_user"
+    url: "${POSTGRES_HOST}:5432"
+    user: "${POSTGRES_USER}"
     isDefault: true
     jsonData:
-      database: "lab4_real_estate"
+      database: "${POSTGRES_DB}"
       sslmode: disable
-      postgresVersion: 1800
+      postgresVersion: 1500
       timescaledb: false
     secureJsonData:
-      password: "VadymGone123"
-  - name: n8n Google Sheets API
-    uid: lab5-json-api
+      password: "${POSTGRES_PASSWORD}"
+
+  - name: Rentkom Business Core API
+    uid: rentkom-core-api
     type: marcusolsson-json-datasource
     access: proxy
-    url: "http://127.0.0.1:5678/webhook/lab5/customer-satisfaction"
-    jsonData: {}
+    url: "http://${API_HOST}:8000/api/v1/analytics/summary"
+    jsonData:
+      httpHeaderName1: "X-Admin-Token"
+    secureJsonData:
+      httpHeaderValue1: "${ADMIN_API_KEY}"

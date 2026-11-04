@@ -1,3 +1,4 @@
+import os
 import pytest
 import time
 from datetime import datetime, timezone, timedelta
@@ -9,12 +10,24 @@ from core.main import app
 from core.database import Base, get_db
 from core.models import ServiceRequest, NotificationOutbox, NotificationAttempt
 from core.config import settings
+from tests.safety import assert_safe_test_database, ensure_test_schema_marker
 
-POSTGRES_URL = "postgresql+psycopg2://postgres@127.0.0.1:5433/postgres"
 
 @pytest.fixture(scope="module")
 def pg_session():
-    engine = create_engine(POSTGRES_URL)
+    postgres_url = os.getenv("TEST_DATABASE_URL")
+    if not postgres_url:
+        pytest.skip("TEST_DATABASE_URL not set; skipping outbox automatic lifecycle PostgreSQL test.")
+    assert_safe_test_database(postgres_url)
+    try:
+        engine = create_engine(postgres_url, pool_pre_ping=True)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1;"))
+        ensure_test_schema_marker(engine)
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        pytest.skip(f"PostgreSQL test database unreachable: {exc}")
     Base.metadata.create_all(bind=engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False)
 
@@ -58,7 +71,7 @@ def test_outbox_automatic_delivery_lifecycle(pg_session):
     }
 
     # 1. Submit service request
-    resp = client.post("/api/v1/requests/", json=req_payload)
+    resp = client.post("/api/v1/requests/", json=req_payload, headers={"X-Admin-Token": settings.ADMIN_API_KEY})
     assert resp.status_code == 201, f"Failed to create request: {resp.text}"
     created_id = resp.json()["id"]
 

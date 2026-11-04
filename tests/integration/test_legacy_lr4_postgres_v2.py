@@ -1,7 +1,8 @@
+import os
 import pytest
 from sqlalchemy import create_engine, text
-
-POSTGRES_URL = "postgresql+psycopg2://postgres@127.0.0.1:5433/postgres"
+from core.database import Base
+from tests.safety import assert_safe_test_database, ensure_test_schema_marker
 
 SQL_LEGACY_FUNCTION = """
 DROP FUNCTION IF EXISTS public.insert_real_estate_request_legacy;
@@ -77,7 +78,7 @@ BEGIN
     )
     VALUES (
         'EMAIL',
-        COALESCE((SELECT email FROM public.customers WHERE customers.id = v_customer_id), 'kanaleclipse@gmail.com'),
+        COALESCE((SELECT email FROM public.customers WHERE customers.id = v_customer_id), 'admin@rentkom.lviv.ua'),
         'Нова заявка на консультацію - ' || p_full_name,
         jsonb_build_object(
             'request_id', v_request_id,
@@ -114,7 +115,20 @@ $$ LANGUAGE plpgsql;
 
 @pytest.fixture(scope="module")
 def pg_engine():
-    engine = create_engine(POSTGRES_URL)
+    postgres_url = os.getenv("TEST_DATABASE_URL")
+    if not postgres_url:
+        pytest.skip("TEST_DATABASE_URL not set; skipping legacy LR4 PostgreSQL test.")
+    assert_safe_test_database(postgres_url)
+    try:
+        engine = create_engine(postgres_url, pool_pre_ping=True)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1;"))
+        ensure_test_schema_marker(engine)
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        pytest.skip(f"PostgreSQL test database unreachable: {exc}")
+    Base.metadata.create_all(bind=engine)
     with engine.connect() as conn:
         conn.execute(text("DELETE FROM public.notification_attempts WHERE outbox_id IN (SELECT id FROM public.notification_outbox WHERE payload_json->>'phone' = '+380671110099');"))
         conn.execute(text("DELETE FROM public.notification_outbox WHERE payload_json->>'phone' = '+380671110099';"))
