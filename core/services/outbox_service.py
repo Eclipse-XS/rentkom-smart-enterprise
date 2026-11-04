@@ -1,9 +1,11 @@
 import logging
 import smtplib
 import socket
+import ssl
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple, Any, Dict
+import httpx
 from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session
 from core.models import NotificationOutbox, NotificationAttempt
@@ -69,7 +71,7 @@ class SMTPTransportAdapter:
             logger.info("[SMTP] Successfully dispatched email to %s", recipient)
             return True, 250, None
         except smtplib.SMTPAuthenticationError as e:
-            err = f"SMTP Authentication failed (code={e.smtp_code})"
+            err = f"SMTP Authentication failed (code={e.smtp_code}): {e.smtp_error}"
             logger.error("[SMTP] %s", err)
             return False, 535, err
         except smtplib.SMTPRecipientsRefused as e:
@@ -78,6 +80,10 @@ class SMTPTransportAdapter:
             err = f"SMTP Recipient refused (code={code}) for {recipient}"
             logger.error("[SMTP] %s", err)
             return False, code, err
+        except (ssl.SSLError, smtplib.SMTPNotSupportedError) as e:
+            err = f"SMTP TLS negotiation failed: {e}"
+            logger.error("[SMTP] %s", err)
+            return False, 525, err
         except smtplib.SMTPResponseException as e:
             code = e.smtp_code or 500
             err = f"SMTP server response error (code={code}): {e.smtp_error}"
@@ -107,21 +113,86 @@ class SMTPTransportAdapter:
                     pass
 
 
+class TelegramTransportAdapter:
+    """
+    Verified Telegram Bot API transport adapter.
+    Validates token, recipient chat ID, dispatches to api.telegram.org, and verifies response ok == true.
+    """
+    def __init__(self, bot_token: Optional[str] = None, timeout: float = 10.0):
+        self.bot_token = bot_token if bot_token is not None else settings.TELEGRAM_BOT_TOKEN
+        self.timeout = timeout
+
+    def send_notification(self, recipient: str, subject: str, payload: Any) -> Tuple[bool, int, Optional[str], Optional[Dict[str, Any]]]:
+        if not self.bot_token or not self.bot_token.strip():
+            return False, 503, "Telegram delivery failed: TELEGRAM_BOT_TOKEN is not configured.", None
+
+        chat_id = recipient
+        if isinstance(payload, dict) and payload.get("telegram_chat_id"):
+            chat_id = str(payload.get("telegram_chat_id"))
+
+        if not chat_id or not str(chat_id).strip():
+            return False, 422, "Telegram recipient identifier cannot be empty", None
+
+        body_text = f"🔔 *{subject}*\n\n"
+        if isinstance(payload, dict):
+            for k, v in payload.items():
+                if k not in ("telegram_chat_id", "force_fail", "provider_metadata"):
+                    body_text += f"• *{k}*: {v}\n"
+        else:
+            body_text += str(payload)
+
+        url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+        req_data = {
+            "chat_id": chat_id,
+            "text": body_text,
+            "parse_mode": "Markdown"
+        }
+
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                resp = client.post(url, json=req_data)
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {}
+
+                if resp.status_code == 200 and data.get("ok") is True:
+                    result_info = data.get("result", {})
+                    msg_id = result_info.get("message_id")
+                    logger.info("[TELEGRAM] Dispatched message to chat_id=%s (msg_id=%s)", chat_id, msg_id)
+                    return True, 200, None, {"provider_message_id": msg_id, "chat_id": chat_id}
+                else:
+                    desc = data.get("description") or resp.text or "Unknown Telegram API error"
+                    err = f"Telegram API error (status={resp.status_code}): {desc}"
+                    logger.error("[TELEGRAM] %s", err)
+                    return False, resp.status_code, err, data
+        except httpx.TimeoutException as e:
+            err = f"Telegram API timeout: {e}"
+            logger.error("[TELEGRAM] %s", err)
+            return False, 504, err, None
+        except Exception as e:
+            err = f"Telegram transport network error: {e}"
+            logger.error("[TELEGRAM] %s", err)
+            return False, 502, err, None
+
+
 def process_outbox(
     db: Session,
     batch_size: int = 10,
     stale_timeout_seconds: int = 300,
-    smtp_transport: Optional[SMTPTransportAdapter] = None
+    smtp_transport: Optional[SMTPTransportAdapter] = None,
+    telegram_transport: Optional[TelegramTransportAdapter] = None,
 ) -> OutboxProcessResult:
     """
     Authoritative Transactional Outbox processor.
     Guarantees:
-      - Atomic lease acquisition via status CAS transition (PENDING/RETRY_PENDING -> PROCESSING).
+      - Atomic lease acquisition via status CAS transition (PENDING/RETRY_PENDING/FAILED -> PROCESSING).
       - Skip locked concurrency protection on supported SQL backends.
       - Worker crash recovery (reclaims stale PROCESSING rows past stale_threshold).
       - Exponential backoff retry calculation on transient failures.
       - Dead-letter FAILED / FAILED_PERMANENT status on exceeding max_retries.
-      - Real SMTP transport execution (never falsifies delivery).
+      - Strict provider validation and routing matrix: unknown provider fails closed.
+      - Never sets sent_at on failed delivery.
     """
     now = datetime.now(timezone.utc)
     stale_threshold = now - timedelta(seconds=stale_timeout_seconds)
@@ -184,6 +255,7 @@ def process_outbox(
         is_success = False
         error_msg = None
         http_code = 200
+        telegram_metadata = None
 
         try:
             # Check for simulated failure flag in payload or settings (for deterministic QA testing)
@@ -220,10 +292,24 @@ def process_outbox(
                 else:
                     is_success = False
                     http_code = 400
-                    error_msg = f"Channel '{item.channel}' is not supported by SMTP provider."
+                    error_msg = f"Routing mismatch: channel '{item.channel}' is not supported by SMTP provider."
+            elif settings.NOTIFICATION_PROVIDER == "telegram":
+                if item.channel == "TELEGRAM":
+                    tg_adapter = telegram_transport or TelegramTransportAdapter()
+                    is_success, http_code, error_msg, telegram_metadata = tg_adapter.send_notification(
+                        recipient=item.recipient,
+                        subject=item.subject,
+                        payload=item.payload_json
+                    )
+                else:
+                    is_success = False
+                    http_code = 400
+                    error_msg = f"Routing mismatch: channel '{item.channel}' is not supported by Telegram provider."
             else:
-                is_success = True
-                http_code = 200
+                # Strictly fail closed on unknown provider (NOTIF-01)
+                is_success = False
+                http_code = 500
+                error_msg = f"Unknown notification provider: '{settings.NOTIFICATION_PROVIDER}'"
         except Exception as e:
             is_success = False
             http_code = 500
@@ -245,6 +331,10 @@ def process_outbox(
             item.status = delivered_status
             item.sent_at = datetime.now(timezone.utc)
             item.last_error = None
+            if telegram_metadata and isinstance(item.payload_json, dict):
+                p_copy = dict(item.payload_json)
+                p_copy["provider_metadata"] = telegram_metadata
+                item.payload_json = p_copy
             success_count += 1
             details.append({
                 "id": item.id,
@@ -253,6 +343,7 @@ def process_outbox(
                 "recipient": item.recipient,
             })
         else:
+            item.sent_at = None  # Never set sent_at on failure
             item.retry_count += 1
             item.last_error = error_msg
             if item.retry_count >= item.max_retries:

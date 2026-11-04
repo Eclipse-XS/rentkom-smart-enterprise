@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: Optional[str] = os.getenv("SMTP_PASSWORD", None)
     SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
     SMTP_TIMEOUT_SECONDS: float = float(os.getenv("SMTP_TIMEOUT_SECONDS", "10.0"))
+    TELEGRAM_TIMEOUT_SECONDS: float = float(os.getenv("TELEGRAM_TIMEOUT_SECONDS", "10.0"))
 
     # External Services
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
@@ -62,7 +63,6 @@ class Settings(BaseSettings):
     RATE_LIMIT_RAG_REQUESTS_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_RAG_REQUESTS_PER_MINUTE", "10"))
 
     # Trusted Proxies for X-Forwarded-For resolution
-    # By default EMPTY: never blindly trust X-Forwarded-For from unknown client connections!
     TRUSTED_PROXIES: List[str] = [
         p.strip() for p in os.getenv("TRUSTED_PROXIES", "").split(",") if p.strip()
     ]
@@ -120,10 +120,18 @@ class Settings(BaseSettings):
             ):
                 errors.append("ADMIN_API_KEY must be configured with a non-demo secret in production/connected mode.")
 
+            valid_providers = ("mock", "smtp", "telegram")
+            if self.NOTIFICATION_PROVIDER not in valid_providers:
+                errors.append(f"Invalid NOTIFICATION_PROVIDER '{self.NOTIFICATION_PROVIDER}'. Supported: {valid_providers}")
+
             env_lower = (self.ENVIRONMENT or "").strip().lower()
             if env_lower == "production":
                 if self.NOTIFICATION_PROVIDER == "mock":
                     errors.append("NOTIFICATION_PROVIDER cannot be 'mock' in production mode.")
+                if self.NOTIFICATION_PROVIDER == "telegram" and not self.TELEGRAM_BOT_TOKEN:
+                    errors.append("TELEGRAM_BOT_TOKEN must be configured when NOTIFICATION_PROVIDER is 'telegram'.")
+                if self.NOTIFICATION_PROVIDER == "smtp" and not self.SMTP_HOST:
+                    errors.append("SMTP_HOST must be configured when NOTIFICATION_PROVIDER is 'smtp'.")
                 try:
                     parsed_db = urlparse(self.DATABASE_URL)
                     if parsed_db.password in ("postgres", "admin", "") and not self.DATABASE_URL.startswith("sqlite"):
