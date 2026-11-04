@@ -15,7 +15,7 @@ def test_e2e_full_business_pipeline(client):
         "consultation_date": "2026-11-25",
         "source_channel": "TELEGRAM"
     }
-    r = client.post("/api/v1/requests/", json=req_payload)
+    r = client.post("/api/v1/requests/", json=req_payload, headers=admin_headers)
     assert r.status_code == 201
     req_id = r.json()["id"]
 

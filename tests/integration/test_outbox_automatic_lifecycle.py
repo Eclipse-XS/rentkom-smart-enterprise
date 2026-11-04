@@ -71,7 +71,7 @@ def test_outbox_automatic_delivery_lifecycle(pg_session):
     }
 
     # 1. Submit service request
-    resp = client.post("/api/v1/requests/", json=req_payload)
+    resp = client.post("/api/v1/requests/", json=req_payload, headers={"X-Admin-Token": settings.ADMIN_API_KEY})
     assert resp.status_code == 201, f"Failed to create request: {resp.text}"
     created_id = resp.json()["id"]
 

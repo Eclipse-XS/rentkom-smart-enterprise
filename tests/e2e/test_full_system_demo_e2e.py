@@ -79,7 +79,7 @@ def test_scenario_1_api_fastapi_postgres_outbox_grafana(real_pg_session):
         "source_channel": "REST_API"
     }
 
-    response = client.post("/api/v1/requests", json=req_payload)
+    response = client.post("/api/v1/requests", json=req_payload, headers={"X-Admin-Token": "rentkom-demo-admin-key-2026"})
     assert response.status_code == 201
     res_data = response.json()
     req_id = res_data["id"]

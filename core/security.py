@@ -100,6 +100,29 @@ def require_internal_or_admin_auth(
     )
 
 
+def get_optional_internal_or_admin_auth(
+    x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
+    x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+) -> Optional[AuthenticatedActor]:
+    token = x_internal_token or x_admin_token or _extract_bearer(authorization)
+    if not token:
+        return None
+
+    admin_key = get_effective_admin_key()
+    internal_key = get_effective_internal_key()
+
+    if admin_key and constant_time_equals(token, admin_key):
+        return AuthenticatedActor(actor_id="admin_user", role="admin")
+    if internal_key and constant_time_equals(token, internal_key):
+        return AuthenticatedActor(actor_id="internal_service", role="internal_service")
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Forbidden: invalid service or administrative credentials."
+    )
+
+
 import time
 from collections import defaultdict
 from threading import Lock

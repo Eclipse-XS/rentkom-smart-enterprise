@@ -116,7 +116,11 @@ def test_end_to_end_local_workflow_contract_harness(client, db_session):
             "source_channel": "GOOGLE_FORMS",
             "source_row_id": "19yHm6hi7G2b8s3y8pFVSoCn8m3HiWJDlFr_CdXMnoUg:567687119:2026-11-03:0675554433",
         }
-        r_create = client.post("/api/v1/requests/", json=n8n_form_payload)
+        r_create = client.post(
+            "/api/v1/requests/",
+            json=n8n_form_payload,
+            headers={"X-Internal-Token": settings.INTERNAL_API_KEY}
+        )
         assert r_create.status_code == 201
         req_id = r_create.json()["id"]
         assert r_create.json()["customer"]["phone"] == "+380675554433"

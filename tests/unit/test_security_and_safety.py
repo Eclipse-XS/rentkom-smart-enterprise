@@ -159,8 +159,8 @@ def test_public_customer_ingestion_remains_open(client):
         "source_channel": "REST_API",
     }
     r = client.post("/api/v1/requests/", json=req_payload)
-    assert r.status_code == 201
-    assert r.json()["id"] > 0
+    assert r.status_code == 202
+    assert "submission_id" in r.json()
 
     fb_payload = {
         "client_identifier": "+380501234567",
@@ -202,7 +202,7 @@ def test_public_endpoint_rate_limiting(client, monkeypatch):
     # First 3 requests succeed
     for _ in range(3):
         r = client.post("/api/v1/requests/", json=req_payload)
-        assert r.status_code == 201
+        assert r.status_code == 202
 
     # 4th request exceeds limit
     r_exceeded = client.post("/api/v1/requests/", json=req_payload)
@@ -237,10 +237,10 @@ def test_x_forwarded_for_spoofing_prevention(client, monkeypatch):
 
     # Attacker attempts to rotate X-Forwarded-For to bypass rate limiter
     r1 = client.post("/api/v1/requests/", json=req_payload, headers={"X-Forwarded-For": "1.1.1.1"})
-    assert r1.status_code == 201
+    assert r1.status_code == 202
 
     r2 = client.post("/api/v1/requests/", json=req_payload, headers={"X-Forwarded-For": "2.2.2.2"})
-    assert r2.status_code == 201
+    assert r2.status_code == 202
 
     # 3rd request from same client with different spoofed IP must still be blocked
     r3 = client.post("/api/v1/requests/", json=req_payload, headers={"X-Forwarded-For": "3.3.3.3"})
@@ -253,8 +253,8 @@ def test_x_forwarded_for_spoofing_prevention(client, monkeypatch):
     monkeypatch.setattr(settings, "TRUSTED_PROXIES", ["testclient", "127.0.0.1"])
     r_proxy1 = client.post("/api/v1/requests/", json=req_payload, headers={"X-Forwarded-For": "203.0.113.10"})
     r_proxy2 = client.post("/api/v1/requests/", json=req_payload, headers={"X-Forwarded-For": "203.0.113.20"})
-    assert r_proxy1.status_code == 201
-    assert r_proxy2.status_code == 201
+    assert r_proxy1.status_code == 202
+    assert r_proxy2.status_code == 202
 
     public_rate_limiter.reset()
 

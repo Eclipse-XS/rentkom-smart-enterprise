@@ -142,14 +142,14 @@ def test_repeated_source_row_id_idempotency_and_conflict(db_session, client):
         "source_row_id": "gform_row_idem_901",
     }
     r1 = client.post("/api/v1/requests/", json=payload)
-    assert r1.status_code == 201
-    id1 = r1.json()["id"]
+    assert r1.status_code == 202
+    sub_id_1 = r1.json()["submission_id"]
 
     # Same source_row_id with normalized phone variant and identical payload -> idempotent return
     payload_same = dict(payload, phone="+38 (067) 123-45-67")
     r2 = client.post("/api/v1/requests/", json=payload_same)
-    assert r2.status_code == 201
-    assert r2.json()["id"] == id1
+    assert r2.status_code == 202
+    assert r2.json()["submission_id"] == sub_id_1
 
     # Conflicting payload with same source_row_id -> HTTP 409 Conflict
     payload_conflict = dict(payload, property_type="Будинок")

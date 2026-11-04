@@ -1,9 +1,12 @@
 import re
+import uuid
+import time
+import hashlib
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from core.models import Customer, ServiceRequest, RequestStatusHistory, NotificationOutbox, AuditEvent
+from core.models import Customer, ServiceRequest, RequestStatusHistory, NotificationOutbox, AuditEvent, InboundLeadSubmission
 from core.schemas import ServiceRequestCreate, ServiceRequestStatusUpdate
 from core.config import settings
 
@@ -38,29 +41,314 @@ def normalize_phone(phone: str) -> str:
     return cleaned
 
 
+def compute_canonical_payload_hash(
+    intake_channel: str,
+    external_event_id: Optional[str],
+    normalized_phone: str,
+    full_name: str,
+    request_purpose: str,
+    property_type: str,
+    property_location: str,
+    consultation_date: str,
+    additional_comments: Optional[str] = None,
+) -> str:
+    """Computes a deterministic SHA-256 fingerprint over normalized canonical request attributes."""
+    norm_channel = (intake_channel or "").strip().upper()
+    norm_event = (external_event_id or "").strip()
+    norm_name = " ".join((full_name or "").strip().split())
+    norm_purpose = (request_purpose or "").strip()
+    norm_prop = (property_type or "").strip()
+    norm_loc = " ".join((property_location or "").strip().lower().split())
+    norm_date = str(consultation_date).strip()
+    norm_comments = (additional_comments or "").strip()
+
+    raw = f"{norm_channel}|{norm_event}|{normalized_phone}|{norm_name}|{norm_purpose}|{norm_prop}|{norm_loc}|{norm_date}|{norm_comments}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def _verify_idempotent_payload_match(existing_req: ServiceRequest, req: ServiceRequestCreate, norm_phone: str) -> None:
     """
     Verifies that a repeated request with the same source_row_id carries a compatible payload.
     Raises ValueError (mapped to HTTP 409 Conflict) if the replay attempts to mutate core attributes.
     """
     existing_phone = existing_req.customer.phone if existing_req.customer else None
+    existing_loc = " ".join((existing_req.property_location or "").strip().lower().split())
+    new_loc = " ".join((req.property_location or "").strip().lower().split())
+    existing_date = str(existing_req.consultation_date)
+    new_date = str(req.consultation_date)
+    existing_name = " ".join((existing_req.customer.full_name or "").strip().split()) if existing_req.customer else ""
+    new_name = " ".join((req.full_name or "").strip().split())
+
     if (
         (existing_phone and existing_phone != norm_phone)
+        or (existing_name and existing_name != new_name)
         or existing_req.request_purpose != req.request_purpose
         or existing_req.property_type != req.property_type
+        or existing_loc != new_loc
+        or existing_date != new_date
+        or (existing_req.source_channel.upper() != (req.source_channel or "REST_API").upper())
     ):
         raise ValueError(
             f"Idempotency conflict: source_row_id '{req.source_row_id}' already exists with a different payload."
         )
 
 
-def create_service_request(db: Session, req: ServiceRequestCreate) -> ServiceRequest:
+def create_lead_submission(db: Session, req: ServiceRequestCreate) -> InboundLeadSubmission:
+    """
+    Public customer ingress: stores an unverified lead staging record without touching
+    or modifying confirmed customer profiles or leaking existing customer PII.
+    """
+    norm_phone = normalize_phone(req.phone)
+    norm_channel = (req.source_channel or "REST_API").strip().upper()
+    event_id = req.source_row_id.strip() if req.source_row_id else None
+
+    payload_hash = compute_canonical_payload_hash(
+        intake_channel=norm_channel,
+        external_event_id=event_id,
+        normalized_phone=norm_phone,
+        full_name=req.full_name,
+        request_purpose=req.request_purpose,
+        property_type=req.property_type,
+        property_location=req.property_location,
+        consultation_date=str(req.consultation_date),
+        additional_comments=req.additional_comments,
+    )
+
+    # 1. Idempotency check: if event_id is supplied
+    if event_id:
+        existing_lead = db.query(InboundLeadSubmission).filter(
+            InboundLeadSubmission.intake_channel == norm_channel,
+            InboundLeadSubmission.external_event_id == event_id,
+        ).first()
+        if existing_lead:
+            if existing_lead.payload_hash == payload_hash:
+                return existing_lead
+            raise ValueError(
+                f"Idempotency conflict: source_row_id '{req.source_row_id}' already exists with a different payload."
+            )
+
+    # 2. Persist unverified lead
+    submission_id = str(uuid.uuid4())
+    lead = InboundLeadSubmission(
+        submission_id=submission_id,
+        intake_channel=norm_channel,
+        external_event_id=event_id,
+        payload_hash=payload_hash,
+        full_name=req.full_name.strip(),
+        phone=req.phone.strip(),
+        normalized_phone=norm_phone,
+        email=req.email.strip() if req.email else None,
+        telegram_chat_id=req.telegram_chat_id,
+        request_purpose=req.request_purpose,
+        property_type=req.property_type,
+        property_location=req.property_location.strip(),
+        consultation_date=req.consultation_date,
+        additional_comments=req.additional_comments.strip() if req.additional_comments else None,
+        status="UNVERIFIED",
+    )
+
+    try:
+        with db.begin_nested():
+            db.add(lead)
+            db.flush()
+    except IntegrityError:
+        if event_id:
+            for _ in range(10):
+                existing_lead = db.query(InboundLeadSubmission).filter(
+                    InboundLeadSubmission.intake_channel == norm_channel,
+                    InboundLeadSubmission.external_event_id == event_id,
+                ).first()
+                if existing_lead:
+                    if existing_lead.payload_hash == payload_hash:
+                        return existing_lead
+                    raise ValueError(
+                        f"Idempotency conflict: source_row_id '{req.source_row_id}' already exists with a different payload."
+                    )
+                time.sleep(0.05)
+        raise
+
+    # 3. Staff alert outbox item (Admin notification only - no PII sent to untrusted submitted destination)
+    admin_entry = NotificationOutbox(
+        channel="EMAIL",
+        recipient=settings.ADMIN_EMAIL,
+        subject=f"Новий вхідний лід #{submission_id[:8]}: {lead.full_name} ({lead.property_type})",
+        payload_json={
+            "submission_id": submission_id,
+            "name": lead.full_name,
+            "phone": lead.normalized_phone,
+            "purpose": lead.request_purpose,
+            "property_type": lead.property_type,
+            "location": lead.property_location,
+            "consultation_date": str(lead.consultation_date),
+        },
+        status="PENDING",
+        retry_count=0
+    )
+    db.add(admin_entry)
+
+    # 4. Audit event
+    audit = AuditEvent(
+        event_type="LEAD_SUBMITTED",
+        entity_type="inbound_lead_submissions",
+        entity_id=lead.id,
+        details_json={"submission_id": submission_id, "channel": norm_channel}
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(lead)
+    return lead
+
+
+def promote_lead_submission(
+    db: Session,
+    submission_id: str,
+    actor: str = "admin",
+    review_notes: Optional[str] = None
+) -> ServiceRequest:
+    """
+    Atomic, authorized promotion of an unverified lead into verified ServiceRequest and Customer.
+    Preserves confirmed customer records and prevents contact hijacking.
+    """
+    lead = db.query(InboundLeadSubmission).filter(
+        InboundLeadSubmission.submission_id == submission_id
+    ).with_for_update().first()
+
+    if not lead:
+        raise LookupError(f"Inbound lead submission '{submission_id}' not found.")
+
+    if lead.status == "PROMOTED":
+        if lead.promoted_request_id:
+            existing_req = db.query(ServiceRequest).filter(
+                ServiceRequest.id == lead.promoted_request_id
+            ).first()
+            if existing_req:
+                return existing_req
+
+    if lead.status == "REJECTED":
+        raise ValueError(f"Cannot promote lead '{submission_id}' because it has been REJECTED.")
+
+    norm_phone = lead.normalized_phone
+
+    # 1. Concurrency-safe customer resolution
+    customer = db.query(Customer).filter(Customer.phone == norm_phone).first()
+    if not customer:
+        try:
+            with db.begin_nested():
+                customer = Customer(
+                    full_name=lead.full_name,
+                    phone=norm_phone,
+                    email=lead.email,
+                    telegram_chat_id=lead.telegram_chat_id
+                )
+                db.add(customer)
+                db.flush()
+        except IntegrityError:
+            customer = db.query(Customer).filter(Customer.phone == norm_phone).first()
+
+    # NOTE: Never overwrite existing confirmed customer contact details from unverified leads
+    # customer.email and customer.telegram_chat_id remain untouched if already set or unverified
+
+    # 2. Create ServiceRequest
+    service_req = ServiceRequest(
+        customer_id=customer.id,
+        request_purpose=lead.request_purpose,
+        property_type=lead.property_type,
+        property_location=lead.property_location,
+        consultation_date=lead.consultation_date,
+        additional_comments=lead.additional_comments,
+        status="NEW",
+        source_channel=lead.intake_channel,
+        source_row_id=lead.external_event_id,
+    )
+    db.add(service_req)
+    db.flush()
+
+    # 3. Create Status History Entry
+    history = RequestStatusHistory(
+        request_id=service_req.id,
+        old_status=None,
+        new_status="NEW",
+        changed_by=actor,
+        comment=f"Лід {lead.submission_id} верифіковано та просунуто оператором {actor}",
+    )
+    db.add(history)
+
+    # 4. Outbox notifications
+    outbox_payload = {
+        "request_id": service_req.id,
+        "customer_name": customer.full_name,
+        "customer_phone": customer.phone,
+        "purpose": service_req.request_purpose,
+        "property_type": service_req.property_type,
+        "location": service_req.property_location,
+        "consultation_date": str(service_req.consultation_date),
+    }
+
+    # Client notification ONLY sent to verified customer contact, not unverified attacker contact
+    if customer.email and "@" in customer.email and "." in customer.email:
+        client_outbox = NotificationOutbox(
+            channel="EMAIL",
+            recipient=customer.email,
+            subject=f"Підтвердження консультації: Агентство нерухомості «Рентком» (Заявка #{service_req.id})",
+            payload_json=outbox_payload,
+            status="PENDING",
+            retry_count=0
+        )
+        db.add(client_outbox)
+    elif customer.telegram_chat_id:
+        client_outbox = NotificationOutbox(
+            channel="TELEGRAM",
+            recipient=str(customer.telegram_chat_id),
+            subject=f"Підтвердження консультації: Агентство нерухомості «Рентком» (Заявка #{service_req.id})",
+            payload_json=outbox_payload,
+            status="PENDING",
+            retry_count=0
+        )
+        db.add(client_outbox)
+
+    # Admin notification
+    admin_entry = NotificationOutbox(
+        channel="EMAIL",
+        recipient=settings.ADMIN_EMAIL,
+        subject=f"Нова заявка на консультацію #{service_req.id}: {customer.full_name} ({service_req.property_type})",
+        payload_json=outbox_payload,
+        status="PENDING",
+        retry_count=0
+    )
+    db.add(admin_entry)
+
+    # 5. Update lead status
+    lead.status = "PROMOTED"
+    lead.promoted_request_id = service_req.id
+    lead.reviewed_by = actor
+    lead.reviewed_at = datetime.now(timezone.utc)
+    lead.review_notes = review_notes
+
+    # 6. Audit event
+    audit = AuditEvent(
+        event_type="LEAD_PROMOTED",
+        entity_type="inbound_lead_submissions",
+        entity_id=lead.id,
+        details_json={
+            "submission_id": lead.submission_id,
+            "promoted_request_id": service_req.id,
+            "actor": actor
+        }
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(service_req)
+    return service_req
+
+
+def create_service_request(db: Session, req: ServiceRequestCreate, actor: str = "system") -> ServiceRequest:
     """
     Concurrency-safe, atomic service request creation and customer deduplication.
-    Guarantees:
+    Authorized internal/admin path:
       1. Idempotent check against duplicate source_row_id (rejecting conflicting payload replays).
       2. Exactly one customer identity per canonical phone number using savepoint collision recovery.
-      3. Atomic persistence of Customer, ServiceRequest, RequestStatusHistory, NotificationOutbox, and AuditEvent.
+      3. Preserves existing customer email and telegram_chat_id against unverified overwrites.
+      4. Atomic persistence of Customer, ServiceRequest, RequestStatusHistory, NotificationOutbox, and AuditEvent.
     """
     norm_phone = normalize_phone(req.phone)
 
@@ -87,17 +375,13 @@ def create_service_request(db: Session, req: ServiceRequestCreate) -> ServiceReq
                 db.add(customer)
                 db.flush()
         except IntegrityError:
-            # Concurrent worker created the customer with this phone simultaneously
             customer = db.query(Customer).filter(Customer.phone == norm_phone).first()
 
     if not customer:
         raise RuntimeError("Failed to resolve customer record during request creation.")
 
-    # Update customer email or telegram_chat_id if provided and not yet populated
-    if req.email and not customer.email:
-        customer.email = req.email.strip()
-    if req.telegram_chat_id and not customer.telegram_chat_id:
-        customer.telegram_chat_id = req.telegram_chat_id
+    # SECURITY FIX (SEC-02): Do NOT modify existing customer.email or customer.telegram_chat_id
+    # Unverified input must never overwrite or populate verified customer contacts.
 
     # 3. Create Service Request (with savepoint guard against concurrent identical source_row_id)
     service_req = None
@@ -131,7 +415,7 @@ def create_service_request(db: Session, req: ServiceRequestCreate) -> ServiceReq
         request_id=service_req.id,
         old_status=None,
         new_status="NEW",
-        changed_by="system",
+        changed_by=actor,
         comment=f"Заявку створено через канал {req.source_channel}"
     )
     db.add(history)
@@ -147,7 +431,7 @@ def create_service_request(db: Session, req: ServiceRequestCreate) -> ServiceReq
         "consultation_date": str(service_req.consultation_date)
     }
 
-    # 5a. Client confirmation (Enqueued ONLY if a verified delivery channel is provided)
+    # 5a. Client confirmation (Enqueued ONLY to customer's verified contact destination)
     if customer.email and "@" in customer.email and "." in customer.email:
         client_outbox = NotificationOutbox(
             channel="EMAIL",
@@ -186,10 +470,9 @@ def create_service_request(db: Session, req: ServiceRequestCreate) -> ServiceReq
             event_type="REQUEST_CREATED",
             entity_type="service_requests",
             entity_id=service_req.id,
-            details_json={"customer_id": customer.id, "source": req.source_channel}
+            details_json={"customer_id": customer.id, "source": req.source_channel, "actor": actor}
         )
         db.add(audit)
-
         db.commit()
     except Exception:
         db.rollback()
@@ -205,10 +488,13 @@ def update_request_status(
     actor: str = "operator"
 ) -> ServiceRequest:
     """
-    Formal state machine transition with audit trail.
+    Formal state machine transition with audit trail and row-level locking (DATA-02).
     Enforces permitted status transitions and records the authenticated actor.
     """
-    service_req = db.query(ServiceRequest).filter(ServiceRequest.id == request_id).first()
+    service_req = db.query(ServiceRequest).filter(
+        ServiceRequest.id == request_id
+    ).with_for_update().first()
+
     if not service_req:
         raise LookupError(f"Service request with ID {request_id} not found")
 

@@ -128,3 +128,35 @@ class TelegramInbox(Base):
     __table_args__ = (
         UniqueConstraint("bot_id", "update_id", name="uq_telegram_inbox_bot_update"),
     )
+
+class InboundLeadSubmission(Base):
+    __tablename__ = "inbound_lead_submissions"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    submission_id = Column(String(36), unique=True, nullable=False, index=True)
+    intake_channel = Column(String(50), default="REST_API", nullable=False)
+    external_event_id = Column(String(255), nullable=True, index=True)
+    payload_hash = Column(String(64), nullable=False, index=True)
+    full_name = Column(String(255), nullable=False)
+    phone = Column(String(50), nullable=False, index=True)
+    normalized_phone = Column(String(50), nullable=False, index=True)
+    email = Column(String(255), nullable=True)
+    telegram_chat_id = Column(BigInteger, nullable=True)
+    request_purpose = Column(String(50), nullable=False)
+    property_type = Column(String(50), nullable=False)
+    property_location = Column(Text, nullable=False)
+    consultation_date = Column(Date, nullable=False)
+    additional_comments = Column(Text, nullable=True)
+    status = Column(String(20), default="UNVERIFIED", nullable=False, index=True) # UNVERIFIED, VERIFIED, REJECTED, PROMOTED
+    review_notes = Column(Text, nullable=True)
+    reviewed_by = Column(String(100), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    promoted_request_id = Column(BigInteger().with_variant(Integer, "sqlite"), ForeignKey("service_requests.id"), nullable=True)
+    created_at = Column(DateTime, default=utc_now, server_default=func.now(), nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_now, server_default=func.now(), onupdate=utc_now, nullable=False)
+
+    promoted_request = relationship("ServiceRequest", foreign_keys=[promoted_request_id])
+
+    __table_args__ = (
+        UniqueConstraint("intake_channel", "external_event_id", name="uq_inbound_leads_channel_event"),
+    )

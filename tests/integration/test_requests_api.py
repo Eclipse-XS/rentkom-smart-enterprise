@@ -11,7 +11,7 @@ def test_create_and_get_request_api(client):
     }
 
     # 1. POST /api/v1/requests
-    resp = client.post("/api/v1/requests/", json=payload)
+    resp = client.post("/api/v1/requests/", json=payload, headers={"X-Admin-Token": "rentkom-demo-admin-key-2026"})
     assert resp.status_code == 201
     data = resp.json()
     assert data["id"] is not None
@@ -49,13 +49,13 @@ def test_idempotent_request_submission(client):
 
     # First submit
     resp1 = client.post("/api/v1/requests/", json=payload)
-    assert resp1.status_code == 201
-    id1 = resp1.json()["id"]
+    assert resp1.status_code == 202
+    id1 = resp1.json()["submission_id"]
 
     # Second submit with identical source_row_id
     resp2 = client.post("/api/v1/requests/", json=payload)
-    assert resp2.status_code == 201
-    id2 = resp2.json()["id"]
+    assert resp2.status_code == 202
+    id2 = resp2.json()["submission_id"]
 
     # Must be the exact same request without duplication
     assert id1 == id2

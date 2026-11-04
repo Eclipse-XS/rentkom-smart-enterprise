@@ -1,20 +1,63 @@
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import List, Optional, Union
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 from core.database import get_db
-from core.models import ServiceRequest, Customer
-from core.schemas import ServiceRequestCreate, ServiceRequestResponse, ServiceRequestStatusUpdate
-from core.services.request_service import create_service_request, update_request_status
-from core.security import require_admin_auth, AuthenticatedActor, check_public_rate_limit
+from core.models import ServiceRequest
+from core.schemas import (
+    ServiceRequestCreate,
+    ServiceRequestResponse,
+    ServiceRequestStatusUpdate,
+    LeadSubmissionAcknowledgment,
+)
+from core.services.request_service import (
+    create_service_request,
+    create_lead_submission,
+    update_request_status,
+)
+from core.security import (
+    require_admin_auth,
+    get_optional_internal_or_admin_auth,
+    AuthenticatedActor,
+    check_public_rate_limit,
+)
 
 router = APIRouter()
 
 
-@router.post("/", response_model=ServiceRequestResponse, status_code=status.HTTP_201_CREATED)
-def submit_request(req_in: ServiceRequestCreate, db: Session = Depends(get_db), _rate_limit: None = Depends(check_public_rate_limit)):
-    """Public customer ingress: Idempotently creates a new consultation request, resolves customer, and enqueues outbox message."""
+@router.post(
+    "/",
+    response_model=Union[ServiceRequestResponse, LeadSubmissionAcknowledgment],
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        201: {"model": ServiceRequestResponse},
+        202: {"model": LeadSubmissionAcknowledgment},
+        409: {"description": "Conflict"},
+    },
+)
+def submit_request(
+    req_in: ServiceRequestCreate,
+    response: Response,
+    db: Session = Depends(get_db),
+    actor: Optional[AuthenticatedActor] = Depends(get_optional_internal_or_admin_auth),
+    _rate_limit: None = Depends(check_public_rate_limit),
+):
+    """
+    Customer consultation intake:
+    - Anonymous/public submissions return 202 Accepted with opaque submission_id and no customer PII (SEC-01).
+    - Authorized internal/admin submissions return 201 Created with full ServiceRequestResponse.
+    """
     try:
-        return create_service_request(db, req_in)
+        if actor:
+            response.status_code = status.HTTP_201_CREATED
+            return create_service_request(db, req_in, actor=actor.actor_id)
+
+        submission = create_lead_submission(db, req_in)
+        response.status_code = status.HTTP_202_ACCEPTED
+        return LeadSubmissionAcknowledgment(
+            submission_id=submission.submission_id,
+            status="RECEIVED",
+            message="Request accepted for processing",
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 

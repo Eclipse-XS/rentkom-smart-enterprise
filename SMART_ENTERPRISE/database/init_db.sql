@@ -164,6 +164,37 @@ CREATE TABLE IF NOT EXISTS public.telegram_inbox (
 CREATE INDEX IF NOT EXISTS idx_telegram_inbox_bot_update ON public.telegram_inbox (bot_id, update_id);
 CREATE INDEX IF NOT EXISTS idx_telegram_inbox_status_locked ON public.telegram_inbox (status, locked_at);
 
+
+-- 8b. Inbound Lead Submissions (Unverified Public Ingress Staging - SEC-01 & SEC-02)
+CREATE TABLE IF NOT EXISTS public.inbound_lead_submissions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    submission_id VARCHAR(36) NOT NULL UNIQUE,
+    intake_channel VARCHAR(50) NOT NULL DEFAULT 'REST_API',
+    external_event_id VARCHAR(255) NULL,
+    payload_hash VARCHAR(64) NOT NULL,
+    full_name VARCHAR(255) NOT NULL,
+    phone VARCHAR(50) NOT NULL,
+    normalized_phone VARCHAR(50) NOT NULL,
+    email VARCHAR(255) NULL,
+    telegram_chat_id BIGINT NULL,
+    request_purpose VARCHAR(50) NOT NULL,
+    property_type VARCHAR(50) NOT NULL,
+    property_location TEXT NOT NULL,
+    consultation_date DATE NOT NULL,
+    additional_comments TEXT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'UNVERIFIED',
+    review_notes TEXT NULL,
+    reviewed_by VARCHAR(100) NULL,
+    reviewed_at TIMESTAMPTZ NULL,
+    promoted_request_id BIGINT NULL REFERENCES public.service_requests(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_inbound_leads_status ON public.inbound_lead_submissions (status);
+CREATE INDEX IF NOT EXISTS idx_inbound_leads_norm_phone ON public.inbound_lead_submissions (normalized_phone);
+CREATE INDEX IF NOT EXISTS idx_inbound_leads_channel_event ON public.inbound_lead_submissions (intake_channel, external_event_id);
+
 -- 9. Backward Compatibility View for LR4 / Legacy Grafana panels
 DO $$
 BEGIN

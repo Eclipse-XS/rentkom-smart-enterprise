@@ -61,7 +61,7 @@ def test_scenario_a_api_postgres_outbox_mock_provider_grafana(db_session):
         "source_channel": "REST_API"
     }
 
-    status, res = api_post("/requests/", req_payload)
+    status, res = api_post("/requests/", req_payload, headers={"X-Admin-Token": settings.ADMIN_API_KEY})
     assert status in (200, 201)
     req_id = res["id"]
 
