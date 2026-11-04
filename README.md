@@ -262,7 +262,7 @@ Grafana (`SMART_ENTERPRISE/monitoring/`) provisions two datasource integrations 
 
 ## 15. Testing Strategy & Commands
 
-The automated test suite comprises **127 automated test cases** across unit, integration, and end-to-end layers:
+The automated test suite comprises **131 automated test cases** across unit, integration, and end-to-end layers:
 
 ```bash
 # 1. Run fast unit, security, and workflow contract tests (60 tests, SQLite in-memory):
@@ -271,7 +271,7 @@ pytest tests/unit -v --tb=short
 # 2. Run SMTP transport & Telegram connected-mode contract tests (20 tests):
 pytest tests/integration/test_smtp_delivery.py tests/integration/test_telegram_connected_mode_contract.py -v --tb=short
 
-# 3. Run full suite including PostgreSQL integration, migrations, backup/restore, and live RAG (127 tests):
+# 3. Run full suite including PostgreSQL integration, migrations, backup/restore, and live RAG (131 tests):
 # Set TEST_DATABASE_URL to an isolated disposable test database (must contain 'test', 'disposable', or 'temp'):
 export TEST_DATABASE_URL="postgresql+psycopg2://postgres@127.0.0.1:5439/rentkom_test"
 pytest tests/ -v --tb=short
