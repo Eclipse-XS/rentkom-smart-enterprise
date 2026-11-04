@@ -15,6 +15,7 @@ from core.security import (
     get_effective_internal_key,
     get_effective_test_secret,
     _extract_bearer,
+    check_public_rate_limit,
 )
 from core.schemas import (
     TelegramInboxGuardRequest,
@@ -165,7 +166,11 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
 
 
 @router.post("/webhook-mock", response_model=TelegramResponseMock)
-async def telegram_webhook_mock(update: TelegramUpdateMock, db: Session = Depends(get_db)):
+async def telegram_webhook_mock(
+    update: TelegramUpdateMock,
+    db: Session = Depends(get_db),
+    _rate_limit: None = Depends(check_public_rate_limit),
+):
     """Mock testing endpoint for Unified Telegram Router (Demo/Test environment only)."""
     if not settings.is_test_webhook_permitted:
         raise HTTPException(
@@ -181,38 +186,32 @@ async def telegram_webhook(
     x_telegram_bot_api_secret_token: Optional[str] = Header(None, alias="X-Telegram-Bot-Api-Secret-Token"),
     x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
     authorization: Optional[str] = Header(None, alias="Authorization"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _rate_limit: None = Depends(check_public_rate_limit),
 ):
     """Production ingress endpoint for Unified Telegram Router with webhook secret verification."""
-    if not settings.is_safe_demo_or_dev:
-        tg_secret = settings.TELEGRAM_SECRET_TOKEN
-        internal_key = get_effective_internal_key()
-        bearer = _extract_bearer(authorization)
-        internal_candidate = x_internal_token or bearer
-
-        is_valid_tg = bool(tg_secret and constant_time_equals(x_telegram_bot_api_secret_token, tg_secret))
-        is_valid_internal = bool(internal_key and constant_time_equals(internal_candidate, internal_key))
-
-        if not (tg_secret or internal_key):
+    tg_secret = settings.TELEGRAM_SECRET_TOKEN
+    if not settings.is_safe_demo_or_dev or tg_secret:
+        if not tg_secret:
             raise HTTPException(
                 status_code=500,
-                detail="Server security misconfiguration: TELEGRAM_SECRET_TOKEN or INTERNAL_API_KEY not configured."
+                detail="Server security misconfiguration: TELEGRAM_SECRET_TOKEN is not configured."
             )
-        if not (is_valid_tg or is_valid_internal):
-            if not (x_telegram_bot_api_secret_token or internal_candidate):
+        if not x_telegram_bot_api_secret_token:
+            internal_key = get_effective_internal_key()
+            bearer = _extract_bearer(authorization)
+            internal_candidate = x_internal_token or bearer
+            if internal_key and internal_candidate and constant_time_equals(internal_candidate, internal_key):
+                pass
+            else:
                 raise HTTPException(
                     status_code=401,
                     detail="Unauthorized: missing X-Telegram-Bot-Api-Secret-Token or internal service token."
                 )
+        elif not constant_time_equals(x_telegram_bot_api_secret_token, tg_secret):
             raise HTTPException(
                 status_code=403,
                 detail="Forbidden: invalid Telegram webhook secret token."
-            )
-    elif settings.TELEGRAM_SECRET_TOKEN and x_telegram_bot_api_secret_token is not None:
-        if not constant_time_equals(x_telegram_bot_api_secret_token, settings.TELEGRAM_SECRET_TOKEN):
-            raise HTTPException(
-                status_code=403,
-                detail="Forbidden: invalid X-Telegram-Bot-Api-Secret-Token."
             )
 
     return await process_telegram_update(update, db=db)
