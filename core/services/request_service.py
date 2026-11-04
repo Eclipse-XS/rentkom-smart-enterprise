@@ -51,18 +51,21 @@ def compute_canonical_payload_hash(
     property_location: str,
     consultation_date: str,
     additional_comments: Optional[str] = None,
+    email: Optional[str] = None,
 ) -> str:
     """Computes a deterministic SHA-256 fingerprint over normalized canonical request attributes."""
     norm_channel = (intake_channel or "").strip().upper()
     norm_event = (external_event_id or "").strip()
+    norm_phone = (normalized_phone or "").strip()
     norm_name = " ".join((full_name or "").strip().split())
+    norm_email = (email or "").strip().lower()
     norm_purpose = (request_purpose or "").strip()
     norm_prop = (property_type or "").strip()
     norm_loc = " ".join((property_location or "").strip().lower().split())
     norm_date = str(consultation_date).strip()
     norm_comments = (additional_comments or "").strip()
 
-    raw = f"{norm_channel}|{norm_event}|{normalized_phone}|{norm_name}|{norm_purpose}|{norm_prop}|{norm_loc}|{norm_date}|{norm_comments}"
+    raw = f"{norm_channel}|{norm_event}|{norm_phone}|{norm_name}|{norm_email}|{norm_purpose}|{norm_prop}|{norm_loc}|{norm_date}|{norm_comments}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -72,20 +75,30 @@ def _verify_idempotent_payload_match(existing_req: ServiceRequest, req: ServiceR
     Raises ValueError (mapped to HTTP 409 Conflict) if the replay attempts to mutate core attributes.
     """
     existing_phone = existing_req.customer.phone if existing_req.customer else None
+    existing_email = (existing_req.customer.email or "").strip().lower() if existing_req.customer else ""
+    new_email = (req.email or "").strip().lower()
+
     existing_loc = " ".join((existing_req.property_location or "").strip().lower().split())
     new_loc = " ".join((req.property_location or "").strip().lower().split())
+
     existing_date = str(existing_req.consultation_date)
     new_date = str(req.consultation_date)
+
     existing_name = " ".join((existing_req.customer.full_name or "").strip().split()) if existing_req.customer else ""
     new_name = " ".join((req.full_name or "").strip().split())
+
+    existing_notes = (existing_req.additional_comments or "").strip()
+    new_notes = (req.additional_comments or "").strip()
 
     if (
         (existing_phone and existing_phone != norm_phone)
         or (existing_name and existing_name != new_name)
-        or existing_req.request_purpose != req.request_purpose
-        or existing_req.property_type != req.property_type
-        or existing_loc != new_loc
-        or existing_date != new_date
+        or (existing_email != new_email)
+        or (existing_req.request_purpose != req.request_purpose)
+        or (existing_req.property_type != req.property_type)
+        or (existing_loc != new_loc)
+        or (existing_date != new_date)
+        or (existing_notes != new_notes)
         or (existing_req.source_channel.upper() != (req.source_channel or "REST_API").upper())
     ):
         raise ValueError(
@@ -102,6 +115,7 @@ def create_lead_submission(db: Session, req: ServiceRequestCreate) -> InboundLea
     norm_channel = (req.source_channel or "REST_API").strip().upper()
     event_id = req.source_row_id.strip() if req.source_row_id else None
 
+    norm_email = (req.email or "").strip().lower() or None
     payload_hash = compute_canonical_payload_hash(
         intake_channel=norm_channel,
         external_event_id=event_id,
@@ -112,6 +126,7 @@ def create_lead_submission(db: Session, req: ServiceRequestCreate) -> InboundLea
         property_location=req.property_location,
         consultation_date=str(req.consultation_date),
         additional_comments=req.additional_comments,
+        email=norm_email,
     )
 
     # 1. Idempotency check: if event_id is supplied
@@ -515,8 +530,21 @@ def update_request_status(
             f"Permitted next states from '{old_status}': {allowed_list}."
         )
 
-    service_req.status = target_status
-    service_req.updated_at = datetime.now(timezone.utc)
+    # Atomic CAS status transition to eliminate concurrent status overwrite race (DATA-02)
+    rows_updated = db.query(ServiceRequest).filter(
+        ServiceRequest.id == request_id,
+        ServiceRequest.status == old_status
+    ).update(
+        {"status": target_status, "updated_at": datetime.now(timezone.utc)},
+        synchronize_session="fetch"
+    )
+    if rows_updated == 0:
+        db.rollback()
+        current_req = db.query(ServiceRequest).filter_by(id=request_id).first()
+        cur_status = current_req.status if current_req else "UNKNOWN"
+        raise ValueError(
+            f"Concurrent status modification conflict: status was changed to '{cur_status}' by another transaction."
+        )
 
     # Record status history with authenticated actor
     history = RequestStatusHistory(

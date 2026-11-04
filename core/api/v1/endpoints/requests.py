@@ -103,4 +103,7 @@ def change_status(
     except LookupError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        err_msg = str(e)
+        if "conflict" in err_msg.lower():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=err_msg)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err_msg)

@@ -390,27 +390,21 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 10. Seed Baseline Historical Records (LR4 verified data)
-INSERT INTO public.customers (full_name, phone, created_at, updated_at) VALUES
-('Олексій Мельник', '+380671112233', '2026-10-18 10:15:00+03', '2026-10-18 10:15:00+03'),
-('Ірина Ковальчук', '+380502223344', '2026-10-19 11:20:00+03', '2026-10-19 11:20:00+03'),
-('Маркіян Дуб', '+380933334455', '2026-10-20 14:00:00+03', '2026-10-20 14:00:00+03'),
-('Софія Бойко', '+380674445566', '2026-10-21 16:45:00+03', '2026-10-21 16:45:00+03'),
-('Василь Гончарук', '+380689998877', '2026-10-22 10:29:16+03', '2026-10-22 10:29:16+03')
-ON CONFLICT (phone) DO NOTHING;
+-- 10. Role and Privilege Separation (DATA-05)
+DO 
+BEGIN
+    IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'rentkom_app') THEN
+        GRANT USAGE ON SCHEMA public TO rentkom_app;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO rentkom_app;
+        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO rentkom_app;
+    END IF;
 
-INSERT INTO public.service_requests (customer_id, request_purpose, property_type, property_location, consultation_date, additional_comments, status, source_channel, source_row_id, created_at, updated_at)
-SELECT c.id, d.request_purpose, d.property_type, d.property_location, d.consultation_date::date, d.additional_comments, d.status, d.source_channel, d.source_row_id, d.created_at::timestamptz, d.updated_at::timestamptz
-FROM (VALUES
-    ('+380671112233', 'Хочу купити', 'Квартира', 'Франківський р-н, вул. Генерала Чупринки', '2026-10-20', 'Потрібен 2-кімнатний варіант біля Політехніки', 'COMPLETED', 'GOOGLE_FORMS', '1sPj...:Лист1:2', '2026-10-18 10:15:00+03', '2026-10-18 10:15:00+03'),
-    ('+380502223344', 'Хочу орендувати', 'Квартира', 'Сихівський р-н, проспект Червоної Калини', '2026-10-21', 'Оренда для сім''ї, довгостроково', 'COMPLETED', 'GOOGLE_FORMS', '1sPj...:Лист1:3', '2026-10-19 11:20:00+03', '2026-10-19 11:20:00+03'),
-    ('+380933334455', 'Хочу продати', 'Будинок', 'Личаківський р-н, Винники', '2026-10-22', 'Терміновий продаж будинку 150 кв.м', 'COMPLETED', 'GOOGLE_FORMS', '1sPj...:Лист1:4', '2026-10-20 14:00:00+03', '2026-10-20 14:00:00+03'),
-    ('+380674445566', 'Хочу здати в оренду', 'Квартира', 'Галицький р-н, площа Ринок', '2026-10-23', 'Квартира з ремонтом під подобову/довгострокову', 'COMPLETED', 'GOOGLE_FORMS', '1sPj...:Лист1:5', '2026-10-21 16:45:00+03', '2026-10-21 16:45:00+03'),
-    ('+380689998877', 'Хочу купити', 'Квартира', 'м. Львів, Шевченківський р-н', '2026-10-24', 'Консультація щодо купівлі нерухомості', 'COMPLETED', 'GOOGLE_FORMS', '1sPj...:Лист1:6', '2026-10-22 10:29:16+03', '2026-10-22 10:29:16+03')
-) AS d(phone, request_purpose, property_type, property_location, consultation_date, additional_comments, status, source_channel, source_row_id, created_at, updated_at)
-JOIN public.customers c ON c.phone = d.phone
-ON CONFLICT (source_row_id) DO NOTHING;
-
+    IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'rentkom_n8n') THEN
+        GRANT USAGE ON SCHEMA public TO rentkom_n8n;
+        GRANT SELECT, INSERT, UPDATE ON public.telegram_inbox TO rentkom_n8n;
+        GRANT SELECT ON public.customer_feedbacks TO rentkom_n8n;
+    END IF;
+END ;
 -- Grant permissions to lab4_user if exists
 DO $$
 BEGIN
