@@ -3,10 +3,11 @@
 **Execution Date:** 2026-11-04
 **Branch:** `fix/rentkom-complete-remediation`
 **Python Runtime:** Python 3.13.5 (`pytest-9.1.1`)
-**PostgreSQL Test Instances:**
+**PostgreSQL Test Environments:**
   - Ephemeral PostgreSQL 18.x on host (`127.0.0.1:5439/rentkom_test`)
   - Containerized PostgreSQL 16.x in Docker (`rentkom-postgres:5432/lab4_real_estate`)
-**Vector & LLM Runtimes:**
+  - GitHub Actions CI PostgreSQL 16 service container (`rentkom_test`)
+**Vector & LLM Runtimes (Local Stack):**
   - Qdrant container (`127.0.0.1:6333`, 32 indexed points)
   - Ollama host daemon (`127.0.0.1:11434`, `mxbai-embed-large:latest` + `qwen3:4b-instruct`)
 **Automation Runtime:**
@@ -14,40 +15,53 @@
 
 ---
 
-## 1. Summary of Executed Test Suites
+## 1. Local Full Suite Execution vs. GitHub Actions CI Execution
+
+We strictly distinguish between the **Local Integrated Stack** (where all optional supporting containers run) and the **GitHub Actions Multi-Stage CI Pipeline** (which runs isolated in cloud runners without GPU or multi-service daemon overhead):
+
+### 1.1 Local Full Suite Execution (All Daemons Running)
 
 | Suite / Scope | Command | Collected | Passed | Skipped | Failed | Duration |
 |---|---|---:|---:|---:|---:|---:|
-| **Unit, Security & Workflow Contracts** | `pytest tests/unit -v --tb=short` | `45` | **`45`** | `0` | `0` | `1.48s` |
+| **Unit, Security & Safety Suite** | `pytest tests/unit -v --tb=short` | `47` | **`47`** | `0` | `0` | `1.95s` |
 | **SMTP Transport & Telegram Connected Contract** | `pytest tests/integration/test_smtp_delivery.py tests/integration/test_telegram_connected_mode_contract.py -v --tb=short` | `20` | **`20`** | `0` | `0` | `4.36s` |
 | **Live n8n Unified Router Suite** | `pytest tests/integration/test_n8n_unified_router_live.py -v --tb=short` | `4` | **`4`** | `0` | `0` | `61.04s` |
-| **Full Pytest Suite (Unit + Integration + E2E + Live n8n)** | `pytest tests/ -v --tb=short` | `112` | **`112`** | **`0`** | `0` | `218.08s` |
+| **Full Pytest Suite (Unit + Integration + E2E + Live n8n)** | `pytest tests/ -v --tb=short` | `114` | **`114`** | **`0`** | `0` | `220.12s` |
 | **PostgreSQL SQL Bootstrap & Idempotent Migration** | `psql -v ON_ERROR_STOP=1 -f init_db.sql` & `2x schema_v2.sql` | `3 runs` | **`3`** | `0` | `0` | `1.8s` |
 | **30-Question Live RAG Evaluation Benchmark** | `python tools/evaluate_rag_suite.py` | `30 queries` | **`30`** | `0` | `0` | `485.2s` |
 | **Docker Compose Profile Validation** | `docker compose --profile <p> config --quiet` | `4 profiles` | **`4`** | `0` | `0` | `1.9s` |
 
-> **All 112 collected tests executed and passed without any skips or failures (100% pass rate).**
+### 1.2 GitHub Actions CI Pipeline Execution (Run `41801598326` / `41801603223`)
+
+| CI Stage | Command / Focus | Passed | Skipped | Failed | Duration |
+|---|---|---:|---:|---:|---:|
+| **Stage 1: Syntax, Security & Workflow Contracts** | Compile check + n8n JSON schema + Docker Compose profiles | **`4`** | `0` | `0` | `19s` |
+| **Stage 2: Unit, Security & SMTP Transport** | `pytest tests/unit` (47) + SMTP & Telegram contracts (19 pass, 1 skip) | **`66`** | **`1`** | `0` | `18s` |
+| **Stage 3: PostgreSQL Integration & Backup/Restore** | SQL bootstrap + Idempotent migrations + Integration/E2E tests | **`59`** | **`8`** | `0` | `39s` |
+
+#### Forensic Explanation of Intentional CI Skips
+The 9 total skips in GitHub Actions are intentional, designed graceful degradations when external daemon ports are absent in standard CI runners:
+1. **1 Skip in Stage 2 (`test_telegram_connected_mode_contract.py::test_n8n_execution_output_contains_zero_plaintext_tokens`)**:
+   - *Reason:* Checks historical execution records inside a local SQLite database (`runtime/n8n/database.sqlite`). When running in clean cloud CI, this historical artifact is absent and the test cleanly skips.
+2. **4 Skips in Stage 3 (`test_n8n_unified_router_live.py`)**:
+   - *Reason:* All 4 tests in this module require a live n8n webhook daemon on `http://localhost:5678`. Standard CI runners run PostgreSQL 16 via a service container, but do not start the full n8n Node.js daemon. Each test verifies port 5678 and skips via `pytest.skip("Live n8n daemon not listening on port 5678")`.
+3. **3 Skips in Stage 3 (`test_rag_evaluation_holdout.py::test_live_rag_grounded_answer[...]`)**:
+   - *Reason:* Validates real-time neural LLM inference against Qdrant (port 6333) and Ollama (port 11434). Standard GitHub Actions runners lack GPUs and local LLM model weights; the tests gracefully skip when ports 6333/11434 are closed.
+4. **1 Skip in Stage 3 (`test_telegram_connected_mode_contract.py`)**:
+   - *Reason:* Same historical SQLite artifact check as in Stage 2.
 
 ---
 
-## 2. 30-Question Live RAG Evaluation Results
+## 2. 30-Question Live RAG Evaluation Results (`evaluation/rag_eval_results.json`)
 
-Executed via `tools/evaluate_rag_suite.py` against live Qdrant (32 indexed points from agency knowledge base) and live Ollama (`mxbai-embed-large:latest` embedding model and `qwen3:4b-instruct` generation model).
-
-Scoring is **non-circular, strictly grounded on gold standard labels**, verifying:
-1. `recall_at_k`: Retrieved source documents contain expected gold standard document.
-2. `answer_keyword_coverage`: Generated response contains required technical key terms.
-3. `abstention_accuracy`: System strictly abstains/rejects out-of-domain and adversarial prompt injections.
-4. `unsupported_answer_rate`: System does not hallucinate facts outside the indexed corpus.
-5. `citation_support_rate`: System cites verifiable filenames from the knowledge base.
-
-### Benchmark Metrics Summary (`evaluation/rag_eval_results.json`)
+Executed via `tools/evaluate_rag_suite.py` against live Qdrant (32 indexed points from agency knowledge base) and live Ollama (`mxbai-embed-large:latest` and `qwen3:4b-instruct`).
 
 ```json
 {
   "total_questions": 30,
   "recall_at_k": 0.85,
   "answer_keyword_coverage": 0.90,
+  "factual_claim_accuracy": 0.95,
   "unnecessary_abstention_rate": 0.05,
   "abstention_accuracy": 1.00,
   "unsupported_answer_rate": 0.0667,
@@ -57,78 +71,56 @@ Scoring is **non-circular, strictly grounded on gold standard labels**, verifyin
 }
 ```
 
-### Breakdown by Category
-
-1. **Single Document Questions (Q01-Q10)**: 10/10 grounded, 9/10 keyword coverage, average score 0.76.
-2. **Multi-Document Synthesis (Q11-Q15)**: 5/5 grounded, 5/5 keyword coverage, average score 0.78.
-3. **Out-of-Domain Rejections (Q16-Q20)**: 5/5 correctly rejected (`mode='rejected'`), 100% abstention accuracy, 0 latency / 0 hallucination.
-4. **Colloquial Paraphrases (Q21-Q25)**: 4/5 grounded, 4/5 keyword coverage, robust retrieval under vernacular phrasing.
-5. **Adversarial Prompt Injection (Q26-Q30)**: 5/5 defended (`mode='rejected'`), prompt jailbreaks and instruction overrides neutralized by `<retrieved_evidence>` boundary isolation and safety guardrails.
+### Analysis of Factual Grounding & Limitations
+- **Retrieval Hit Rate (Recall@K = 85.0%)**: 17 of 20 in-domain questions retrieved their authoritative primary documents.
+- **Unsupported Answer Rate (6.67%, 2 / 30)**: In questions `Q14` and `Q23`, the primary document was missed during vector retrieval. The model produced a grounded answer using domain knowledge in the system prompt rather than the retrieved chunk. This is accurately classified as unsupported grounding.
+- **Citation Support Rate (89.47%, 17 / 19)**: 17 of 19 grounded responses carried citations with cosine similarity $\ge 0.55$ matching the expected source document.
+- **Abstention Accuracy (100.0%, 10 / 10)**: 5 out-of-domain questions and 5 prompt injection attacks were cleanly rejected.
+- **Methodological Disclaimer**: Passing 5 static prompt injection queries does not constitute complete defense against novel multi-turn, token-smuggling, or zero-day jailbreak variants.
 
 ---
 
-## 3. Detailed Test Suite Breakdown (112/112 PASSED)
+## 3. External Integration Testing Boundaries
 
-### 3.1 Unit & Contract Tests (`tests/unit/` — 45/45 PASSED)
-- **`test_security_and_safety.py` (10/10 PASSED)**:
-  - `test_safety_guard_rejects_application_and_default_databases`
-  - `test_safety_guard_rejects_unmarked_database`
-  - `test_safety_guard_accepts_test_database`
-  - `test_unauthorized_endpoints_rejected_401_missing_credentials`
-  - `test_invalid_credentials_rejected_403`
-  - `test_authorized_endpoints_succeed_with_valid_credentials`
-  - `test_missing_configured_server_key_returns_500_no_bypass`
-  - `test_environment_modes_demo_connected_production`
-  - `test_public_customer_ingestion_remains_open`
-  - `test_zero_plaintext_secrets_in_provisioning`
-- **`test_business_core_concurrency_and_lifecycle.py` (8/8 PASSED)**:
-  - `test_normalize_phone_canonical_formats`
-  - `test_normalize_phone_invalid_lengths`
-  - `test_request_state_machine_valid_lifecycle`
-  - `test_request_state_machine_rejects_illegal_transitions`
-  - `test_repeated_source_row_id_idempotency_and_conflict`
-  - `test_transaction_rollback_on_failure_leaves_zero_partial_records`
-  - `test_concurrent_customer_deduplication[2]`
-  - `test_concurrent_customer_deduplication[10]`
-- **`test_n8n_workflows_contract.py` (4/4 PASSED)**:
-  - `test_all_eight_n8n_workflows_valid_json_and_zero_localhost_urls`
-  - `test_single_authoritative_active_telegram_router`
-  - `test_feedback_workflow_does_not_default_missing_ratings_to_five`
-  - `test_end_to_end_local_workflow_contract_harness`
-- **`test_rag_grounding_and_safety.py` (6/6 PASSED)**:
-  - `test_system_prompt_has_legal_disclaimer_and_untrusted_evidence_rules`
-  - `test_indirect_prompt_injection_in_retrieved_chunk_is_sanitized`
-  - `test_rag_never_returns_grounded_when_qdrant_offline[asyncio]`
-  - `test_rag_abstains_when_retrieval_returns_empty_or_low_similarity[asyncio]`
-  - `test_rag_grounded_with_real_retrieved_chunks_and_exact_score[asyncio]`
-  - `test_rag_evaluation_dataset_has_30_questions_across_5_categories`
-- **`test_outbox_logic.py` (9/9 PASSED)**:
-  - Atomicity, mock processing, crash recovery, dead-letter after `max_retries`, malformed recipient, idempotency, exponential backoff, optional client notification, Telegram channel outbox.
-- **`test_telegram_idempotency.py` (2/2 PASSED)**
-- **`test_telegram_router_logic.py` (1/1 PASSED)**
-- **`test_deduplication.py` (1/1 PASSED)**
-- **`test_validation.py` (4/4 PASSED)**
+We explicitly state that:
+1. **SMTP Delivery**: Verified using real socket-level TCP connections against an in-process local SMTP server (`test_smtp_delivery.py`), covering STARTTLS handshakes, authentication, recipient errors (`550`, `451`), and network timeouts (`504`). It was **not** tested against an external enterprise SMTP server over the public internet to prevent unsolicited test emails.
+2. **Telegram Bot Dispatch**: Verified using contract tests against mock dispatchers, local database lease recovery, and simulated upstream responses (`200`, `429`, `503`, timeouts). It was **not** connected to `api.telegram.org` with a live commercial production bot token to prevent live messaging side-effects.
 
-### 3.2 Integration Tests (`tests/integration/` — 56/56 PASSED)
-- **`test_n8n_unified_router_live.py` (4/4 PASSED)**: Live webhook ingress, rental request routing, feedback routing, and outbox trigger via n8n container.
-- **`test_smtp_delivery.py` (6/6 PASSED)**: Real local TCP SMTP server delivery, 503 missing host, 502 connection refused, 504 timeout, 535 auth failure without password leak, 550/451 recipient errors, idempotent reprocessing.
-- **`test_telegram_connected_mode_contract.py` (14/14 PASSED)**: Demo vs. connected auth boundaries, fail-closed on missing server keys, duplicate update drop, test-to-real Telegram block, 429/503/timeout/200 upstream handling, zero secret leakage in responses and workflow exports.
-- **`test_backup_restore.py` (2/2 PASSED)**: Rejects non-test DBs; executes real `pg_dump` and `psql` restore into disposable PostgreSQL database and verifies table counts.
-- **`test_real_postgresql_v2.py` (3/3 PASSED)**: Full migration lifecycle, `FOR UPDATE SKIP LOCKED` concurrent workers, crash recovery on PostgreSQL.
-- **`test_legacy_lr4_postgres_v2.py` (4/4 PASSED)**: Legacy `real_estate_requests` view `INSTEAD OF INSERT ... RETURNING id`, `ON CONFLICT` idempotency, phone deduplication, outbox + Grafana views.
-- **`test_lr4_notification_pipeline_forensics.py` (5/5 PASSED)**: Single delivery, repeated `source_row_id` zero duplicates, provider recovery, concurrent identical `source_row_id`, at-least-once crash boundary.
-- **`test_demo_seed_idempotency.py` (3/3 PASSED)**
-- **`test_lr3_feedback_pipeline.py` (1/1 PASSED)**
-- **`test_outbox_automatic_lifecycle.py` (2/2 PASSED)**
-- **`test_outbox_concurrency.py` (1/1 PASSED)**
-- **`test_telegram_inbox_postgres.py` (2/2 PASSED)**
-- **`test_database_migration.py` (1/1 PASSED)**
-- **`test_feedbacks_api.py` (1/1 PASSED)**
-- **`test_requests_api.py` (2/2 PASSED)**
-- **`test_rag_evaluation_holdout.py` (5/5 PASSED)**
+---
 
-### 3.3 End-to-End Tests (`tests/e2e/` — 11/11 PASSED)
-- **`test_cleanroom_business_scenarios.py` (5/5 PASSED)**: Scenarios A, B, C, D, E.
-- **`test_e2e_scenarios.py` (1/1 PASSED)**: Full business pipeline.
-- **`test_full_system_demo_e2e.py` (2/2 PASSED)**: Scenario 1 (FastAPI $\to$ PostgreSQL $\to$ Outbox $\to$ Grafana SQL) and Scenario 2 (Unified Router $\to$ Qdrant $\to$ Ollama live RAG).
-- **`test_rag_guardrails.py` (3/3 PASSED)**: Prompt injection, out-of-domain, and offline fallback guardrails.
+## 4. Test Suite Detailed Breakdown (47 Unit + 56 Integration + 11 E2E)
+
+### 4.1 Unit Tests (`tests/unit/` — 47 PASSED)
+- `test_security_and_safety.py` (12 PASSED): Database safety guards, 401 missing credentials, 403 invalid credentials, fail-closed 500 when keys unset, public endpoint accessibility, zero plaintext secrets in provisioning, **public endpoint rate limiting (HTTP 429)**, and **dynamically configurable agency contact details**.
+- `test_business_core_concurrency_and_lifecycle.py` (8 PASSED): Phone normalization, state machine lifecycle transitions, repeated source row ID conflict, transaction rollback on failure, and concurrent customer deduplication (2 and 10 threads).
+- `test_n8n_workflows_contract.py` (4 PASSED): All 8 workflow exports valid JSON without localhost URLs, single active router, feedback rating preservation, local workflow execution harness.
+- `test_rag_grounding_and_safety.py` (6 PASSED): Legal disclaimer and untrusted evidence rules, prompt injection sanitization, offline Qdrant fallback, low-similarity abstention, exact score reporting, 30-question dataset validation.
+- `test_outbox_logic.py` (9 PASSED): Atomicity, mock provider, crash recovery, dead-letter queue, malformed recipient, idempotency, backoff, no client address, channel notification.
+- `test_telegram_idempotency.py` (2 PASSED)
+- `test_telegram_router_logic.py` (1 PASSED)
+- `test_deduplication.py` (1 PASSED)
+- `test_validation.py` (4 PASSED)
+
+### 4.2 Integration Tests (`tests/integration/` — 56 PASSED)
+- `test_n8n_unified_router_live.py` (4 PASSED): Live webhook ping, rental request routing, feedback routing, outbox cron trigger.
+- `test_smtp_delivery.py` (6 PASSED): Real TCP socket delivery, missing host 503, connection refused 502, timeout 504, auth failure 535 without password leak, recipient errors.
+- `test_telegram_connected_mode_contract.py` (14 PASSED): Auth boundaries, fail-closed, duplicate updates, test-to-real block, upstream 429/503/timeout, zero secret leakage.
+- `test_backup_restore.py` (2 PASSED): Safety guard rejection, real `pg_dump` and `psql` restore with cross-version `transaction_timeout` filtering.
+- `test_real_postgresql_v2.py` (3 PASSED): Migration lifecycle, `FOR UPDATE SKIP LOCKED` worker concurrency, crash recovery.
+- `test_legacy_lr4_postgres_v2.py` (4 PASSED): Legacy view trigger, conflict idempotency, deduplication.
+- `test_lr4_notification_pipeline_forensics.py` (5 PASSED): Single delivery, duplicate detection, provider recovery, concurrent identical row ID, crash recovery.
+- `test_demo_seed_idempotency.py` (3 PASSED)
+- `test_lr3_feedback_pipeline.py` (1 PASSED)
+- `test_outbox_automatic_lifecycle.py` (2 PASSED)
+- `test_outbox_concurrency.py` (1 PASSED)
+- `test_telegram_inbox_postgres.py` (2 PASSED)
+- `test_database_migration.py` (1 PASSED)
+- `test_feedbacks_api.py` (1 PASSED)
+- `test_requests_api.py` (2 PASSED)
+- `test_rag_evaluation_holdout.py` (5 PASSED)
+
+### 4.3 End-to-End Tests (`tests/e2e/` — 11 PASSED)
+- `test_cleanroom_business_scenarios.py` (5 PASSED): Scenarios A, B, C, D, E.
+- `test_e2e_scenarios.py` (1 PASSED): Full business pipeline.
+- `test_full_system_demo_e2e.py` (2 PASSED): Scenario 1 (FastAPI $\to$ PostgreSQL $\to$ Outbox $\to$ Grafana) and Scenario 2 (Unified Router $\to$ Qdrant $\to$ Ollama).
+- `test_rag_guardrails.py` (3 PASSED): Prompt injection, out-of-domain rejection, offline graceful fallback.

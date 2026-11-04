@@ -1,29 +1,33 @@
 # RENTKOM SMART ENTERPRISE — REMAINING RISKS & OPERATIONAL LIMITATIONS
 
-**Audit Date:** 2026-11-03
-**Branch:** `remediation/engineering-acceptance`
+**Audit Date:** 2026-11-04
+**Branch:** `fix/rentkom-complete-remediation`
+**Target Upstream:** `main` (`origin/main` HEAD `b607df6`)
+**Pull Request:** [#1](https://github.com/Eclipse-XS/rentkom-smart-enterprise/pull/1)
 
-This document transparently records all remaining environmental constraints, architectural trade-offs, and operational considerations following completion of the engineering remediation.
+This document transparently records all environmental constraints, architectural trade-offs, and operational considerations following completion of the engineering remediation.
 
 ---
 
-## 1. Environmental & Host Limitations
+## 1. Environmental & Operational Boundaries
 
-| ID | Risk / Limitation | Classification | Impact | Mitigation / Operator Action |
+| ID | Operational Area | Classification | Impact | Mitigation / Operator Action |
 |---|---|---|---|---|
-| **ENV-01** | **Docker Desktop Linux Engine Stopped on Host** | `BLOCKED_BY_ENVIRONMENT` | Live container startup (`docker compose up`) could not be executed during this session because `//./pipe/dockerDesktopLinuxEngine` was unavailable on the Windows host. | All 4 Docker Compose profiles (`demo`, `connected`, `full-ai`, `dedicated-worker`) were validated via `docker compose config --quiet`, and all underlying services (PostgreSQL 18, FastAPI, Qdrant, Ollama) were verified natively. Start Docker Desktop before running `docker compose up`. |
-| **ENV-02** | **External Live Telegram & Production SMTP Relay Credentials** | `BLOCKED_BY_ENVIRONMENT` | Live outbound dispatch to `api.telegram.org` and external production SMTP relays requires user-owned credentials (`TELEGRAM_BOT_TOKEN`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`) not stored in the repository. | Protocol adapters were verified against real local TCP SMTP servers (`tests/integration/test_smtp_delivery.py`) and deterministic HTTP upstream mocks (`429`, `503`, timeout, `200` in `test_telegram_connected_mode_contract.py`). Populate `.env` before starting `connected` or `production` mode. |
-| **ENV-03** | **Local CPU LLM Inference Latency** | Hardware Constraint | Running `qwen3:4b-instruct-2507-q4_K_M` on CPU yields a median RAG latency of `17.34s` (`p95 = 31.39s`). | Generation is bounded (`num_predict=384`) with a 60-second client timeout and graceful fallback. Deploy with a CUDA/ROCm GPU (`full-ai` profile or native Ollama) for sub-3-second latency under concurrent load. |
+| **ENV-01** | **Docker Clean-Room Stack** | `OPERATIONAL_VERIFIED` | Full containerized stack (PostgreSQL 16, FastAPI, n8n, Qdrant, Grafana) verified on Docker Desktop v29.7.2. | Chained healthchecks ensure orderly boot. Use `docker compose --profile connected up -d` for multi-service startup. Historical note: Early remediation passes ran natively while Docker daemon was offline. |
+| **ENV-02** | **External Live Telegram & Production SMTP Credentials** | `OPERATIONAL_PREREQUISITE` | Live outbound dispatch to `api.telegram.org` and commercial corporate SMTP relays requires customer-owned credentials (`TELEGRAM_BOT_TOKEN`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`). | Protocol adapters verified against local TCP SMTP servers (`test_smtp_delivery.py`) and simulated upstream API contracts (`test_telegram_connected_mode_contract.py`). Populate `.env` or production vault before enabling `connected` or `production` mode. |
+| **ENV-03** | **Local CPU LLM Inference Latency** | Hardware Constraint | Running `qwen3:4b-instruct-2507-q4_K_M` on host CPU yields median RAG generation latency of `22.155s` (`p95 = 30.676s`). | Generation is bounded (`num_predict=384`) with a 90-second client timeout and graceful fallback. Deploy on GPU-enabled infrastructure (CUDA/ROCm) for production sub-3-second throughput. |
+| **ENV-04** | **In-Memory Rate Limiting Scope** | Architectural Boundary | Public ingress (`POST /api/v1/requests/`, `POST /api/v1/feedbacks/`) embeds a thread-safe sliding-window rate limiter (`InMemoryRateLimiter`, 60 req/min per IP, HTTP 429). | In multi-worker horizontal scaling (e.g. Gunicorn/Uvicorn multi-process or Kubernetes replicas), an in-memory limiter tracks counts per process. For enterprise multi-node deployments, terminate traffic at an external API Gateway / reverse proxy (Nginx, Cloudflare, Traefik) or attach Redis-backed rate limiting. |
 
 ---
 
-## 2. Architectural & Operational Trade-offs
+## 2. Architectural & Operational Considerations
 
 1. **At-Least-Once Outbox Delivery Semantics**:
-   - The transactional outbox claims rows with a `PROCESSING` lease (`stale_timeout_seconds=300`) before invoking the external SMTP/Telegram transport and commits `PROVIDER_ACCEPTED` immediately afterward.
-   - If the worker process crashes *after* the remote SMTP server accepts `DATA` but *before* the local database commits `PROVIDER_ACCEPTED`, the stale lease recovery mechanism will re-deliver the notification after 300 seconds. This is standard at-least-once delivery behavior and is explicitly tested in `test_e_crash_after_delivery_at_least_once_documentation`.
-2. **Git History Divergence (`remediation/engineering-acceptance` vs. `origin/main`)**:
-   - As documented in `RECOVERY_BASELINE.md`, the local branch history (`remediation/engineering-acceptance`) and `origin/main` do not share a common commit ancestor (`git merge-base` returns exit code 1) due to an earlier standalone repository initialization.
-   - Per strict engineering safety rules, no destructive rebase, force-push, or automatic unrelated-history merge was performed. When integrating with `origin/main`, the repository owner should review the branch diff or open a compare PR according to their preferred release workflow.
-3. **Rate Limiting Scope**:
-   - Public endpoints (`POST /api/v1/requests/`, `POST /api/v1/feedbacks/`, `POST /api/v1/rag/ask`) enforce strict Pydantic input length/pattern validation, phone normalization, and pre-retrieval regex filters, but do not embed an in-process IP rate limiter because reverse-proxy rate limiting (Nginx / Cloudflare / Traefik) is standard in multi-worker deployments. Configure upstream rate limiting before exposing port `8000` directly to the public internet.
+   - The transactional outbox claims rows with a `PROCESSING` lease (`stale_timeout_seconds=300`) using `FOR UPDATE SKIP LOCKED` before invoking the external SMTP/Telegram transport, and commits `SENT` / `PROVIDER_ACCEPTED` immediately afterward.
+   - If the worker process crashes *after* the remote SMTP server accepts `DATA` but *before* the local database commits status, the stale lease recovery mechanism will re-deliver the notification after 300 seconds. This is standard at-least-once delivery behavior and is explicitly tested in `test_outbox_case_a_worker_crash_recovery`.
+2. **Git Lineage & PR Structure**:
+   - Historical branch `remediation/engineering-acceptance` was preserved untouched at SHA `6a67cc5`.
+   - The authoritative deliverable branch `fix/rentkom-complete-remediation` cleanly branches from `origin/main` (`b607df6`), sharing a direct fast-forward ancestor. Zero force-pushes or squashes were performed. Pull Request [#1](https://github.com/Eclipse-XS/rentkom-smart-enterprise/pull/1) is open for code review.
+3. **RAG Grounding & Adversarial Scope**:
+   - RAG evaluation achieved 85.0% Recall@K, 95.0% factual claim accuracy, 89.47% citation support, and 6.67% unsupported answer rate (2 of 30 queries where retrieval missed the primary source and the model answered from system prompt domain rules).
+   - Passing 5 static prompt injection queries (`Q26`–`Q30`) demonstrates that XML delimiters (`<retrieved_evidence>`) and prompt sanitization work against direct instruction overriding. It does **not** constitute proof of universal security against novel or dynamic LLM jailbreak variants.

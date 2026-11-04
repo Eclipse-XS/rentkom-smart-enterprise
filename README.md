@@ -257,16 +257,16 @@ Grafana (`SMART_ENTERPRISE/monitoring/`) provisions two datasource integrations 
 
 ## 15. Testing Strategy & Commands
 
-The automated test suite comprises **112 test cases** across unit, integration, and end-to-end layers:
+The automated test suite comprises **114 automated test cases** across unit, integration, and end-to-end layers:
 
 ```bash
-# 1. Run fast unit, security, and workflow contract tests (45 tests, SQLite in-memory):
+# 1. Run fast unit, security, and workflow contract tests (47 tests, SQLite in-memory):
 pytest tests/unit -v --tb=short
 
 # 2. Run SMTP transport & Telegram connected-mode contract tests (20 tests):
 pytest tests/integration/test_smtp_delivery.py tests/integration/test_telegram_connected_mode_contract.py -v --tb=short
 
-# 3. Run full suite including PostgreSQL 18 integration, migrations, backup/restore, and live RAG (112 tests):
+# 3. Run full suite including PostgreSQL integration, migrations, backup/restore, and live RAG (114 tests):
 # Set TEST_DATABASE_URL to an isolated disposable test database (must contain 'test', 'disposable', or 'temp'):
 export TEST_DATABASE_URL="postgresql+psycopg2://postgres@127.0.0.1:5439/rentkom_test"
 pytest tests/ -v --tb=short
@@ -288,11 +288,12 @@ python tools/manage.py restore --backup-file backups/rentkom_pg_backup_YYYYMMDD_
 
 ---
 
-## 17. Known Limitations
+## 17. Operational Boundaries & Known Limitations
 
-1. **Docker Desktop Linux Engine on Host**: While `docker compose config` passes for all 4 profiles (`demo`, `connected`, `full-ai`, `dedicated-worker`), starting Linux containers requires the Docker Desktop Linux daemon (`dockerDesktopLinuxEngine`) to be running on the host machine.
-2. **External Provider Credentials**: Live Telegram Bot API (`sendMessage`) and external SMTP relay delivery require user-supplied credentials in `.env`; automated tests verify full protocol behavior using local TCP SMTP servers and mocked HTTP upstreams.
-3. **Local LLM CPU Latency**: Running `qwen3:4b-instruct` on CPU yields a median RAG generation latency of ~17.3s; GPU acceleration is recommended for high-concurrency production traffic.
+1. **Docker Clean-Room Stack**: Fully verified on Docker Desktop v29.7.2 across all 4 profiles (`demo`, `connected`, `full-ai`, `dedicated-worker`); multi-service container orchestration is verified operational with chained healthchecks.
+2. **External Provider Credentials**: Live Telegram Bot API (`sendMessage`) and commercial corporate SMTP relay delivery require user-supplied credentials in `.env` or a production vault. Automated test suites verify complete protocol behavior (MIME, STARTTLS, error codes, upstream retry) using local TCP SMTP test servers and simulated HTTP contracts.
+3. **Local LLM CPU Latency**: Running `qwen3:4b-instruct` on CPU yields a median RAG generation latency of ~22.2s (P95: 30.7s); GPU acceleration (CUDA/ROCm) is recommended for high-concurrency production traffic.
+4. **Public Endpoint Rate Limiting**: Anonymous ingress (`POST /api/v1/requests/`, `POST /api/v1/feedbacks/`) is protected by an in-memory sliding-window rate limiter (60 req/min per IP, HTTP 429). In multi-node horizontal deployments, external reverse-proxy rate limiting (Nginx/Cloudflare/Traefik) should be enabled in front of the platform.
 
 ---
 

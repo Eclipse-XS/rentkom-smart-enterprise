@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     TELEGRAM_SECRET_TOKEN: Optional[str] = os.getenv("TELEGRAM_SECRET_TOKEN", None)
     ALLOW_TEST_WEBHOOK: bool = os.getenv("ALLOW_TEST_WEBHOOK", "true").lower() in ("true", "1", "yes")
 
+    # Agency Contact & Support Settings (Configurable fallbacks)
+    AGENCY_CONTACT_PHONE: str = os.getenv("AGENCY_CONTACT_PHONE", "+38 (032) 240-00-00")
+    AGENCY_CONTACT_EMAIL: str = os.getenv("AGENCY_CONTACT_EMAIL", "support@rentkom.lviv.ua")
+
+    # Public Endpoint Rate Limiting
+    RATE_LIMIT_ENABLED: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() in ("true", "1", "yes")
+    RATE_LIMIT_REQUESTS_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_REQUESTS_PER_MINUTE", "60"))
+
     # CORS configuration
     CORS_ORIGINS: List[str] = [
         origin.strip() for origin in os.getenv(

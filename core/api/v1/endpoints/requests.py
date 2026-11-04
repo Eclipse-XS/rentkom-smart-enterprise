@@ -5,13 +5,13 @@ from core.database import get_db
 from core.models import ServiceRequest, Customer
 from core.schemas import ServiceRequestCreate, ServiceRequestResponse, ServiceRequestStatusUpdate
 from core.services.request_service import create_service_request, update_request_status
-from core.security import require_admin_auth, AuthenticatedActor
+from core.security import require_admin_auth, AuthenticatedActor, check_public_rate_limit
 
 router = APIRouter()
 
 
 @router.post("/", response_model=ServiceRequestResponse, status_code=status.HTTP_201_CREATED)
-def submit_request(req_in: ServiceRequestCreate, db: Session = Depends(get_db)):
+def submit_request(req_in: ServiceRequestCreate, db: Session = Depends(get_db), _rate_limit: None = Depends(check_public_rate_limit)):
     """Public customer ingress: Idempotently creates a new consultation request, resolves customer, and enqueues outbox message."""
     try:
         return create_service_request(db, req_in)

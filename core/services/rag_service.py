@@ -5,16 +5,25 @@ from typing import List, Dict, Any, Optional
 from core.schemas import RAGQueryResponse, SourceCitation
 from core.config import settings
 
-ABSTENTION_RESPONSE = (
-    "На жаль, у базі знань агентства немає інформації з цього питання. "
-    "Будь ласка, зверніться до нашого чергового рієлтора за телефоном +38 (032) 240-00-00."
-)
+def get_abstention_response() -> str:
+    phone = getattr(settings, "AGENCY_CONTACT_PHONE", "+38 (032) 240-00-00")
+    return (
+        "На жаль, у базі знань агентства немає інформації з цього питання. "
+        f"Будь ласка, зверніться до нашого чергового рієлтора за телефоном {phone}."
+    )
 
-FALLBACK_RESPONSE = (
-    "Наразі модуль автоматичних консультацій працює в черговому режимі. "
-    "Для отримання вичерпної консультації щодо оренди чи купівлі нерухомості у Львові "
-    "зв'яжіться з нашим фахівцем за телефоном +38 (032) 240-00-00 або скористайтеся меню бота."
-)
+
+def get_fallback_response() -> str:
+    phone = getattr(settings, "AGENCY_CONTACT_PHONE", "+38 (032) 240-00-00")
+    return (
+        "Наразі модуль автоматичних консультацій працює в черговому режимі. "
+        "Для отримання вичерпної консультації щодо оренди чи купівлі нерухомості у Львові "
+        f"зв'яжіться з нашим фахівцем за телефоном {phone} або скористайтеся меню бота."
+    )
+
+
+ABSTENTION_RESPONSE = get_abstention_response()
+FALLBACK_RESPONSE = get_fallback_response()
 
 
 def normalize_query_for_retrieval(query: str) -> str:
@@ -121,7 +130,7 @@ async def query_rag(
     for pat in OUT_OF_DOMAIN_PATTERNS:
         if pat in q_lower:
             return RAGQueryResponse(
-                answer=ABSTENTION_RESPONSE,
+                answer=get_abstention_response(),
                 sources=[],
                 citations=[],
                 confidence_score=0.0,
@@ -187,7 +196,7 @@ async def query_rag(
     # Grounding invariant 1: If Qdrant or Ollama embeddings failed / unreachable -> explicit fallback, never grounded
     if not retrieval_succeeded:
         return RAGQueryResponse(
-            answer=FALLBACK_RESPONSE,
+            answer=get_fallback_response(),
             sources=[],
             citations=[],
             confidence_score=0.0,
@@ -198,7 +207,7 @@ async def query_rag(
     # Grounding invariant 2: If retrieval succeeded but returned 0 qualifying chunks above RAG_MIN_SIMILARITY -> abstain
     if not retrieved_chunks or max_score < settings.RAG_MIN_SIMILARITY:
         return RAGQueryResponse(
-            answer=ABSTENTION_RESPONSE,
+            answer=get_abstention_response(),
             sources=[],
             citations=[],
             confidence_score=round(max_score, 4),
@@ -221,7 +230,7 @@ async def query_rag(
                 json={
                     "model": settings.OLLAMA_MODEL,
                     "prompt": user_prompt,
-                    "system": STRICT_SYSTEM_PROMPT,
+                    "system": STRICT_SYSTEM_PROMPT.replace("+38 (032) 240-00-00", getattr(settings, "AGENCY_CONTACT_PHONE", "+38 (032) 240-00-00")),
                     "stream": False,
                     "options": {
                         "temperature": 0.1,
@@ -247,7 +256,7 @@ async def query_rag(
                 # If the LLM itself decided to abstain because the retrieved chunks didn't answer the specific question
                 if ans_text.strip().startswith("На жаль, у базі знань агентства немає інформації"):
                     return RAGQueryResponse(
-                        answer=ABSTENTION_RESPONSE,
+                        answer=get_abstention_response(),
                         sources=[],
                         citations=[],
                         confidence_score=round(max_score, 4),
@@ -268,7 +277,7 @@ async def query_rag(
 
     # Fallback response if LLM generation failed
     return RAGQueryResponse(
-        answer=FALLBACK_RESPONSE,
+        answer=get_fallback_response(),
         sources=[],
         citations=[],
         confidence_score=0.0,

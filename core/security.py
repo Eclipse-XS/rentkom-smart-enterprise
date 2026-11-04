@@ -98,3 +98,60 @@ def require_internal_or_admin_auth(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Forbidden: invalid service or administrative credentials."
     )
+
+
+import time
+from collections import defaultdict
+from threading import Lock
+from fastapi import Request
+
+
+class InMemoryRateLimiter:
+    """Thread-safe sliding window in-memory rate limiter for public API protection."""
+
+    def __init__(self, requests_per_minute: int = 60, window_seconds: float = 60.0):
+        self.rpm = requests_per_minute
+        self.window = window_seconds
+        self._history = defaultdict(list)
+        self._lock = Lock()
+
+    def check(self, client_ip: str) -> bool:
+        now = time.time()
+        with self._lock:
+            cutoff = now - self.window
+            timestamps = [t for t in self._history[client_ip] if t > cutoff]
+            if len(timestamps) >= self.rpm:
+                self._history[client_ip] = timestamps
+                return False
+            timestamps.append(now)
+            self._history[client_ip] = timestamps
+            return True
+
+    def reset(self):
+        with self._lock:
+            self._history.clear()
+
+
+public_rate_limiter = InMemoryRateLimiter(
+    requests_per_minute=getattr(settings, "RATE_LIMIT_REQUESTS_PER_MINUTE", 60)
+)
+
+
+async def check_public_rate_limit(request: Request):
+    """FastAPI dependency to throttle anonymous abuse on public ingress endpoints."""
+    if not getattr(settings, "RATE_LIMIT_ENABLED", True):
+        return
+
+    # Check client IP (handling proxy headers safely if present)
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
+    else:
+        client_ip = request.client.host if request.client else "unknown"
+
+    if not public_rate_limiter.check(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too Many Requests. Rate limit exceeded. Please try again later.",
+            headers={"Retry-After": "60"}
+        )

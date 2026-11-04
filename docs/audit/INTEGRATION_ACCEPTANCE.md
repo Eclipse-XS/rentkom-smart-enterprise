@@ -1,8 +1,9 @@
 # RENTKOM SMART ENTERPRISE — INTEGRATION & WORKFLOW ACCEPTANCE
 
-**Audit Date:** 2026-11-03
-**Branch:** `remediation/engineering-acceptance`
-**Verification Status:** `VERIFIED_FIXED`
+**Audit Date:** 2026-11-04
+**Branch:** `fix/rentkom-complete-remediation`
+**Target Upstream:** `main` (`origin/main` HEAD `b607df6`)
+**Verification Status:** `VERIFIED_WITH_DOCUMENTED_BOUNDARIES`
 
 ---
 
@@ -12,7 +13,7 @@ The previous hardcoded fake success in `outbox_service.py` was replaced by `SMTP
 
 ### Transport & Outbox Behavior
 - **Missing `SMTP_HOST` when `NOTIFICATION_PROVIDER="smtp"`**: Fails closed (`is_success=False`, code `503`), increments `retry_count`, and schedules exponential backoff (`RETRY_PENDING`).
-- **Real TCP Delivery**: Connects to `SMTP_HOST:SMTP_PORT` with configurable `SMTP_TIMEOUT_SECONDS`, optional `STARTTLS` (`SMTP_USE_TLS`), and optional `login(SMTP_USER, SMTP_PASSWORD)`, then dispatches UTF-8 MIME email via `sendmail`. Transitions outbox status to `PROVIDER_ACCEPTED` (code `250`) only upon SMTP server acknowledgment.
+- **Real TCP Delivery**: Connects to `SMTP_HOST:SMTP_PORT` with configurable `SMTP_TIMEOUT_SECONDS`, optional `STARTTLS` (`SMTP_USE_TLS`), and optional `login(SMTP_USER, SMTP_PASSWORD)`, then dispatches UTF-8 MIME email via `sendmail`. Transitions outbox status to `SENT` / `PROVIDER_ACCEPTED` (code `250`) only upon SMTP server acknowledgment.
 - **Structured Failure Classification**:
   - `SMTPAuthenticationError` $\to$ code `535` (logged without exposing `SMTP_PASSWORD` in logs or database `last_error`).
   - `SMTPRecipientsRefused` $\to$ code `550` / `451` (extracted from recipient tuple).
@@ -23,7 +24,7 @@ The previous hardcoded fake success in `outbox_service.py` was replaced by `SMTP
   - Transitions to `FAILED` (`delivery_state="FAILED_PERMANENT"`) when `retry_count >= max_retries`.
   - Reclaims crashed workers stuck in `PROCESSING` past `stale_timeout_seconds` using `SELECT ... FOR UPDATE SKIP LOCKED` and atomic CAS update.
 
-### Verification Tests (`tests/integration/test_smtp_delivery.py`)
+### Verification Tests (`tests/integration/test_smtp_delivery.py` — 6/6 PASSED)
 1. `test_smtp_missing_configuration_fails_closed` — `PASSED`
 2. `test_smtp_unreachable_host_connection_refused_retries` — `PASSED`
 3. `test_smtp_timeout_records_error_and_schedules_retry` — `PASSED`
@@ -48,11 +49,11 @@ The previous hardcoded fake success in `outbox_service.py` was replaced by `SMTP
 
 ## 3. n8n Workflow Inventory & Contract Verification (`SMART_ENTERPRISE/automation/n8n/`)
 
-All 8 workflow exports were inspected, remediated, and validated by `tests/unit/test_n8n_workflows_contract.py`:
+All 8 workflow exports were inspected, remediated, and validated by `tests/unit/test_n8n_workflows_contract.py` (4/4 PASSED):
 
 | Workflow File | Active | Role | Remediation & Contract Status |
 |---|---|---|---|
-| `unified_telegram_router.json` | **`true`** | Authoritative Telegram ingress (Webhook + Test Webhook), Inbox Guard, Menu/RAG routing, Connected (`/send-message`) vs. Test (`/mock-dispatcher`) dispatch, Inbox Complete | Replaced all 7 `127.0.0.1:8000` URLs with `$env.BUSINESS_API_URL \|\| 'http://business-api:8000'`; added `If Test Mode?` branch routing live traffic to `/api/v1/telegram/send-message` (`VERIFIED_FIXED`) |
+| `unified_telegram_router.json` | **`true`** | Authoritative Telegram ingress (Webhook + Test Webhook), Inbox Guard, Menu/RAG routing, Connected (`/send-message`) vs. Test (`/mock-dispatcher`) dispatch, Inbox Complete | Replaced all 7 `127.0.0.1:8000` URLs with `$env.BUSINESS_API_URL \|\| 'http://business-api:8000'`; added `If Test Mode?` branch routing live traffic to `/api/v1/telegram/send-message`; configured offline webhook trigger (`VERIFIED_FIXED`) |
 | `feedback_to_telegram.json` | `true` | Customer feedback ingestion (`POST /api/v1/feedbacks/`) & low-rating Telegram alert | Replaced `127.0.0.1:8000` with `$env.BUSINESS_API_URL`; fixed rating fallback bug (`Number(rawService) \|\| 5` $\to$ `null` when missing so invalid payloads are rejected with `422` instead of silently recorded as 5-star); replaced hardcoded `chatId: "684809016"` with `$env.TELEGRAM_ADMIN_CHAT_ID` (`VERIFIED_FIXED`) |
 | `google_forms_to_postgres.json` | `true` | Consultation lead intake (`POST /api/v1/requests/`) | Uses `$env.BUSINESS_API_URL`; valid JSON (`VERIFIED_FIXED`) |
 | `outbox_processor_workflow.json` | `true` | Scheduled worker trigger (`POST /api/v1/notifications/process`) | Uses `$env.BUSINESS_API_URL` and `$env.INTERNAL_API_KEY`; valid JSON (`VERIFIED_FIXED`) |
@@ -60,3 +61,21 @@ All 8 workflow exports were inspected, remediated, and validated by `tests/unit/
 | `telegram_bot.json` | `false` | Legacy LR2 menu bot | Deactivated (`active: false`) to prevent Telegram polling conflict (`VERIFIED_FIXED`) |
 | `data_sync_pipeline.json` | `false` | Auxiliary data sync workflow | Valid JSON, zero localhost URLs (`VERIFIED_FIXED`) |
 | `notification_dispatcher.json` | `false` | Auxiliary notification workflow | Valid JSON, zero localhost URLs (`VERIFIED_FIXED`) |
+
+---
+
+## 4. Live n8n Container Verification (`tests/integration/test_n8n_unified_router_live.py`)
+
+Executed against the live Docker Desktop n8n container (`http://localhost:5678`):
+- `test_live_n8n_webhook_ping` — `PASSED`
+- `test_live_n8n_rental_request_routing` — `PASSED` (synthetic rental lead ingested via n8n webhook and persisted to PostgreSQL)
+- `test_live_n8n_feedback_routing` — `PASSED` (synthetic feedback routed to FastAPI)
+- `test_live_n8n_outbox_cron_trigger` — `PASSED` (outbox dispatch triggered via n8n cron node)
+
+---
+
+## 5. Testing Boundaries vs. Production Live Relay Disclaimer
+
+We explicitly document the verification boundaries:
+- **SMTP Protocol Verification:** Tests in `test_smtp_delivery.py` verified real socket-level TCP transmissions (MIME assembly, STARTTLS negotiation, authentication handshakes, recipient error codes) against an in-process TCP SMTP server. They were **not** transmitted across public internet relays to avoid unbudgeted third-party email traffic.
+- **Telegram Dispatch Verification:** Tests in `test_telegram_connected_mode_contract.py` verified outbound payloads, header authentication, and upstream error mapping (`429`, `503`, timeouts) against simulated HTTP endpoints. Live delivery via `https://api.telegram.org` requires a real user-supplied `TELEGRAM_BOT_TOKEN` in the production vault.

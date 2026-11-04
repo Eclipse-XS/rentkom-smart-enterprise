@@ -179,3 +179,50 @@ def test_zero_plaintext_secrets_in_provisioning():
         content = f.read()
     assert "VadymGone123" not in content
     assert "${POSTGRES_PASSWORD" in content
+
+
+
+def test_public_endpoint_rate_limiting(client, monkeypatch):
+    """Verify that public customer ingestion endpoints are protected by rate limiting (HTTP 429)."""
+    from core.security import public_rate_limiter
+    public_rate_limiter.reset()
+    monkeypatch.setattr(public_rate_limiter, "rpm", 3)
+
+    req_payload = {
+        "full_name": "Тестовий Клієнт",
+        "phone": "+380501234567",
+        "email": "test.client@example.com",
+        "request_purpose": "Хочу купити",
+        "property_type": "Квартира",
+        "property_location": "Личаківський р-н",
+        "consultation_date": "2026-11-15",
+        "source_channel": "REST_API",
+    }
+
+    # First 3 requests succeed
+    for _ in range(3):
+        r = client.post("/api/v1/requests/", json=req_payload)
+        assert r.status_code == 201
+
+    # 4th request exceeds limit
+    r_exceeded = client.post("/api/v1/requests/", json=req_payload)
+    assert r_exceeded.status_code == 429
+    assert "Rate limit exceeded" in r_exceeded.json()["detail"]
+    assert r_exceeded.headers.get("retry-after") == "60"
+
+    # Reset limiter for subsequent test isolation
+    public_rate_limiter.reset()
+
+
+def test_rag_configurable_contact_details(monkeypatch):
+    """Verify that fallback/abstention contact details in RAG service are dynamically configurable."""
+    from core.services.rag_service import get_abstention_response, get_fallback_response
+
+    custom_phone = "+38 (044) 999-88-77"
+    monkeypatch.setattr(settings, "AGENCY_CONTACT_PHONE", custom_phone)
+
+    abstention = get_abstention_response()
+    fallback = get_fallback_response()
+
+    assert custom_phone in abstention
+    assert custom_phone in fallback
