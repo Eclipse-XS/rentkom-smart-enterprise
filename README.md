@@ -112,7 +112,7 @@ flowchart TD
 | **Outbox Worker** | `rentkom-outbox-worker` | — | `dedicated-worker` (or in-lifespan) | Polls `notification_outbox` using `FOR UPDATE SKIP LOCKED` and dispatches notifications |
 | **Qdrant** | `rentkom-qdrant` (`qdrant/qdrant:v1.12.1`) | `6333` | `demo`, `connected`, `full-ai` | Vector similarity index storing 32 deterministic chunks across 6 agency documents |
 | **Grafana** | `rentkom-grafana` (`grafana/grafana:11.3.0`) | `3000` | `demo`, `connected`, `full-ai` | Pre-provisioned Business Analytics (13 panels) & Operations Monitoring (6 panels) |
-| **n8n** | `rentkom-n8n` (`n8nio/n8n:1.76.1`) | `5678` | `connected`, `full-ai` | Event-driven workflow automation for Telegram, Google Forms, and alerts |
+| **n8n** | `rentkom-n8n` (`n8nio/n8n:2.46.5`, digest pinned) | `5678` | `connected`, `full-ai` | Event-driven workflow automation; official image currently has one Trivy-reported CRITICAL OS-library finding (CVE-2026-111497) |
 | **Ollama** | `rentkom-ollama` (`ollama/ollama:latest`) | `11434` | `full-ai` (or host native) | Local embedding (`mxbai-embed-large`) and chat generation (`qwen3:4b-instruct-2507-q4_K_M`) |
 
 ---
@@ -262,16 +262,16 @@ Grafana (`SMART_ENTERPRISE/monitoring/`) provisions two datasource integrations 
 
 ## 15. Testing Strategy & Commands
 
-The automated test suite comprises **131 automated test cases** across unit, integration, and end-to-end layers:
+The current suite collects **194 tests** across unit, security, integration, and end-to-end layers. Tests requiring live n8n, PostgreSQL, Qdrant, Ollama, or external providers skip when those explicitly required resources are absent.
 
 ```bash
-# 1. Run fast unit, security, and workflow contract tests (60 tests, SQLite in-memory):
+# 1. Run unit, security, and workflow contract tests:
 pytest tests/unit -v --tb=short
 
-# 2. Run SMTP transport & Telegram connected-mode contract tests (20 tests):
+# 2. Run SMTP transport & Telegram connected-mode contract tests:
 pytest tests/integration/test_smtp_delivery.py tests/integration/test_telegram_connected_mode_contract.py -v --tb=short
 
-# 3. Run full suite including PostgreSQL integration, migrations, backup/restore, and live RAG (131 tests):
+# 3. Run the full suite including PostgreSQL integration, migrations, backup/restore, and live RAG:
 # Set TEST_DATABASE_URL to an isolated disposable test database (must contain 'test', 'disposable', or 'temp'):
 export TEST_DATABASE_URL="postgresql+psycopg2://postgres@127.0.0.1:5439/rentkom_test"
 pytest tests/ -v --tb=short
@@ -295,8 +295,8 @@ python tools/manage.py restore --backup-file backups/rentkom_pg_backup_YYYYMMDD_
 
 ## 17. Operational Boundaries & Known Limitations
 
-1. **Docker Clean-Room Stack**: Fully verified on Docker Desktop v29.7.2 across all 4 profiles (`demo`, `connected`, `full-ai`, `dedicated-worker`); multi-service container orchestration is verified operational with chained healthchecks.
-2. **External Provider Credentials**: Live Telegram Bot API (`sendMessage`) and commercial corporate SMTP relay delivery require user-supplied credentials in `.env` or a production vault. Automated test suites verify complete protocol behavior (MIME, STARTTLS, error codes, upstream retry) using local TCP SMTP test servers and simulated HTTP contracts.
+1. **n8n image security**: n8n 2.46.5 fixes the named expression-engine advisories and is digest-pinned. Trivy 0.67.2 still reports CVE-2026-111497 in `brotli-libs 1.2.0-r1`; release acceptance remains blocked until an official image contains `1.2.1-r0` or later and rescans clean.
+2. **External Provider Credentials**: Live Telegram Bot API (`sendMessage`) and commercial corporate SMTP relay delivery require user-supplied credentials in `.env` or a production vault. External Telegram delivery is NOT_VERIFIED when those credentials are absent.
 3. **Local LLM CPU Latency**: Running `qwen3:4b-instruct` on CPU yields a median RAG generation latency of ~22.2s (P95: 30.7s); GPU acceleration (CUDA/ROCm) is recommended for high-concurrency production traffic.
 4. **Public & RAG Rate Limiting**: Anonymous ingress (`POST /api/v1/requests/`, `POST /api/v1/feedbacks/`, 60 req/min) and neural RAG inference (`POST /api/v1/rag/ask`, 10 req/min) are protected by in-memory sliding-window rate limiters (HTTP 429). Client IP resolution enforces `TRUSTED_PROXIES` before honoring `X-Forwarded-For`. In multi-process horizontal deployments, Redis-backed rate limiting should be enabled in front of the platform.
 

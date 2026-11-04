@@ -27,7 +27,8 @@
   - Під час старту (`settings.validate_runtime_security()`) перевіряє наявність надійних ключів `ADMIN_API_KEY` та `INTERNAL_API_KEY` (мінімум 24 символи, заборона демо-значень), забороняє `ALLOW_TEST_WEBHOOK=true` та `NOTIFICATION_PROVIDER=mock` у `production`.
   - Ендпоінт аналітики (`GET /api/v1/analytics/summary`) вимагає авторизації адміністратора (`X-Admin-Token`) або внутрішнього токена.
   - Анонімні заявки (`POST /api/v1/requests/`) проходять через захисний шлюз неперевірених лідів (HTTP 202 Accepted, opaque submission ID) без розкриття персональних даних клієнтів (SEC-01/02).
-  - База даних підтримує розділення привілеїв: застосунок працює під `rentkom_app`, а n8n має обмежені права `rentkom_n8n` (DATA-05).
+  - База даних розділяє привілеї: застосунок працює під `rentkom_app`; n8n працює під `rentkom_n8n`, має DDL лише у схемі `n8n` і не має доступу до бізнес-таблиць `public`.
+  - Для наявного volume після встановлення `RENTKOM_APP_PASSWORD` і `RENTKOM_N8N_PASSWORD` виконайте `docker compose exec postgres bash /docker-entrypoint-initdb.d/02_roles.sh`; видалення volume не потрібне.
 
 ---
 
@@ -105,14 +106,10 @@ python tools/manage.py restore --backup-file backups/rentkom_pg_backup_YYYYMMDD_
 ```bash
 python scripts/bootstrap_n8n_credentials.py
 ```
-Скрипт зчитує `INTERNAL_API_KEY` із середовища та виконує `n8n import:credentials`, миттєво видаляючи тимчасовий дескриптор.
+Скрипт вимагає `INTERNAL_API_KEY`, `TEST_WEBHOOK_SECRET` і `TELEGRAM_SECRET_TOKEN`, імпортує три header credentials через `n8n import:credentials` та видаляє тимчасовий файл.
 
-### Варіант Б. Налаштування змінних середовища n8n
-Усі 8 експортованих воркфлоу n8n використовують змінні середовища замість жорстко закодованих адрес або секретів:
-- `BUSINESS_API_URL` (за замовчуванням у Docker: `http://business-api:8000`)
-- `INTERNAL_API_KEY` (токен міжсервісної авторизації `X-Internal-Token`)
-- `TEST_WEBHOOK_SECRET` (токен тестового контуру `X-Test-Token`)
-- `TELEGRAM_ADMIN_CHAT_ID` (ID адміністративного чату в Telegram для сповіщень)
+### Trusted configuration
+`N8N_BLOCK_ENV_ACCESS_IN_NODE=true` залишається увімкненим. Workflow expressions не читають `$env`: внутрішня авторизація та ingress secrets надходять з n8n credentials, адреса API є внутрішнім Compose DNS endpoint, а `TELEGRAM_ADMIN_CHAT_ID` задається як n8n project variable (`$vars`).
 
 ---
 

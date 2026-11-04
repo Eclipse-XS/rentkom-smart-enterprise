@@ -26,7 +26,9 @@ We strictly distinguish between the **Local Integrated Stack** (where all option
 | **Unit, Security & Safety Suite** | `pytest tests/unit -v --tb=short` | `60` | **`60`** | `0` | `0` | `1.79s` |
 | **SMTP Transport & Telegram Connected Contract** | `pytest tests/integration/test_smtp_delivery.py tests/integration/test_telegram_connected_mode_contract.py -v --tb=short` | `20` | **`20`** | `0` | `0` | `4.36s` |
 | **Live n8n Unified Router Suite** | `pytest tests/integration/test_n8n_unified_router_live.py -v --tb=short` | `4` | **`4`** | `0` | `0` | `61.04s` |
-| **Full Pytest Suite (Unit + Integration + E2E + Live n8n)** | `pytest tests/ -v --tb=short` | `127` | **`127`** | **`0`** | `0` | `220.12s` |
+| **Full Pytest Suite with disposable PostgreSQL 16** | `pytest -q` | `194` | **`190`** | **`4`** | `0` | `220.82s` |
+| **Fixed regression subset** | targeted SQL/n8n/E2E tests | `19` | **`19`** | `0` | `0` | `72.88s` |
+| **Disposable PostgreSQL 16 Integration + E2E** | `pytest -q tests/integration tests/e2e` | `115` | **`111`** | **`4`** | `0` | `425.66s` |
 | **PostgreSQL SQL Bootstrap & Idempotent Migration** | `psql -v ON_ERROR_STOP=1 -f init_db.sql` & `2x schema_v2.sql` | `3 runs` | **`3`** | `0` | `0` | `1.8s` |
 | **30-Question Live RAG Evaluation Benchmark** | `python tools/evaluate_rag_suite.py` | `30 queries` | **`30`** | `0` | `0` | `485.2s` |
 | **Docker Compose Profile Validation** | `docker compose --profile <p> config --quiet` | `4 profiles` | **`4`** | `0` | `0` | `1.9s` |
@@ -61,21 +63,21 @@ Executed via `tools/evaluate_rag_suite.py` against live Qdrant (32 indexed point
   "total_questions": 30,
   "run_mode": "live_inference",
   "is_cached_run": false,
-  "retrieval_single_doc_recall": 0.8667,
-  "retrieval_multi_doc_full_coverage": 0.2000,
-  "retrieval_multi_doc_partial_recall": 0.8000,
-  "overall_source_coverage_ratio": 0.7500,
-  "recall_at_k": 0.8500,
+  "retrieval_single_doc_recall": 0.9333,
+  "retrieval_multi_doc_full_coverage": 0.8000,
+  "retrieval_multi_doc_partial_recall": 1.0000,
+  "overall_source_coverage_ratio": 0.9250,
+  "recall_at_k": 0.9500,
   "factual_claim_accuracy": 0.8000,
   "heuristic_claim_match_proxy": 0.8000,
-  "answer_keyword_coverage": 0.9500,
-  "citation_support_rate": 0.7368,
-  "citation_entailment_proxy": 0.7368,
+  "answer_keyword_coverage": 0.9000,
+  "citation_support_rate": 0.9474,
+  "citation_entailment_proxy": 0.9474,
   "abstention_accuracy": 1.0000,
   "unnecessary_abstention_rate": 0.0500,
-  "unsupported_answer_rate": 0.1667,
-  "p50_latency_seconds": 24.329,
-  "p95_latency_seconds": 34.489
+  "unsupported_answer_rate": 0.0333,
+  "p50_latency_seconds": 32.191,
+  "p95_latency_seconds": 74.635
 }
 ```
 

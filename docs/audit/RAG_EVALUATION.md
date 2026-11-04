@@ -77,7 +77,7 @@ Each point carries deterministic `uuid5(NAMESPACE_DNS, f"rentkom:{doc_id}:{idx}"
 
 ## 4. Live 30-Question Benchmark Evaluation (`evaluation/rag_eval_results.json`)
 
-Fresh live benchmark execution against active Qdrant + Ollama (`qwen3:4b-instruct`, `timestamp: 2026-11-04T12:39:33Z`):
+Fresh live benchmark execution against active Qdrant + Ollama (`qwen3:4b-instruct`, `timestamp: 2026-11-04T15:35:09Z`):
 
 ### Measured Benchmark Metrics Summary
 
@@ -85,18 +85,18 @@ Fresh live benchmark execution against active Qdrant + Ollama (`qwen3:4b-instruc
 |---|---:|---:|---|
 | **Total Questions Evaluated** | `30` | $\ge 30$ | 20 in-domain, 5 out-of-domain, 5 adversarial injections |
 | **Run Mode** | **`live_inference`** | Live | Fresh live execution against active local Qdrant and Ollama |
-| **Retrieval Recall@K (Any Source)** | **`0.8500` (85.0%)** | $\ge 0.80$ | 17/20 in-domain queries retrieved at least one expected source in top-K |
-| **Single-Document Retrieval Recall** | **`0.8667` (86.7%)** | $\ge 0.80$ | 13/15 single-document / paraphrase queries retrieved expected source |
-| **Multi-Document Full Coverage** | **`0.2000` (20.0%)** | $\ge 0.50$ | 1/5 multi-doc queries retrieved ALL required sources (top-K=3 constraint) |
-| **Overall Source Coverage Ratio** | **`0.7500` (75.0%)** | $\ge 0.70$ | Average fraction of required documents present in top-3 chunks |
-| **Answer Keyword Coverage** | **`0.9500` (95.0%)** | $\ge 0.80$ | 19/20 in-domain queries contained expected domain keyword stems |
+| **Retrieval Recall@K (Any Source)** | **`0.9500` (95.0%)** | $\ge 0.80$ | 19/20 in-domain queries retrieved at least one expected source |
+| **Single-Document Retrieval Recall** | **`0.9333` (93.33%)** | $\ge 0.80$ | 14/15 single-document / paraphrase queries retrieved expected source |
+| **Multi-Document Full Coverage** | **`0.8000` (80.0%)** | $\ge 0.50$ | 4/5 multi-doc queries retrieved all required sources |
+| **Overall Source Coverage Ratio** | **`0.9250` (92.5%)** | $\ge 0.70$ | Average fraction of required documents present |
+| **Answer Keyword Coverage** | **`0.9000` (90.0%)** | $\ge 0.80$ | 18/20 in-domain queries contained expected domain keyword stems |
 | **Factual Claim Accuracy (Heuristic Proxy)** | **`0.8000` (80.0%)** | $\ge 0.75$ | **16/20 in-domain queries** verified against reference claim anchors (Q05, Q08, Q15, Q22 failed) |
-| **Citation Entailment Proxy** | **`0.7368` (73.68%)** | $\ge 0.75$ | 14/19 grounded queries have qualifying citations matching expected sources ($\ge 0.55$) |
+| **Citation Entailment Proxy** | **`0.9474` (94.74%)** | $\ge 0.75$ | 18/19 grounded queries have qualifying citations matching expected sources ($\ge 0.55$) |
 | **Abstention Accuracy** | **`1.0000` (100.0%)** | `1.00` | 10/10 out-of-domain and adversarial prompts safely rejected |
 | **Unnecessary Abstention Rate** | **`0.0500` (5.0%)** | $\le 0.10$ | 1/20 in-domain queries (Q22) abstained due to low similarity |
-| **Unsupported Answer Rate** | **`0.1667` (16.67%)** | $\le 0.20$ | 5/30 total queries (Q11, Q13, Q14, Q15, Q23) lacked full qualifying citation coverage |
-| **Median Latency (`p50`)** | `24.329 s` | Bounded | Local CPU generation (`qwen3:4b-instruct`); guardrail checks `< 0.001 s` |
-| **95th Percentile Latency (`p95`)** | `34.489 s` | Bounded | Local CPU inference without GPU acceleration |
+| **Unsupported Answer Rate** | **`0.0333` (3.33%)** | $\le 0.20$ | 1/30 total queries lacked full qualifying citation coverage |
+| **Median Latency (`p50`)** | `32.191 s` | Bounded | Local inference (`qwen3:4b-instruct`) |
+| **95th Percentile Latency (`p95`)** | `74.635 s` | Bounded | Local inference under concurrent acceptance workload |
 
 ---
 

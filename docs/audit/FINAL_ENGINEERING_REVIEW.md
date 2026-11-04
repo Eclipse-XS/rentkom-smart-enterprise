@@ -6,20 +6,20 @@
 **Base Commit:** `origin/main` (`b607df6a6207874e6cf5ee77389209a5c6f36158`)
 **Pull Request:** [#1 (fix: complete engineering remediation and independent acceptance)](https://github.com/Eclipse-XS/rentkom-smart-enterprise/pull/1)
 **Lead Principal Engineer Review & Final Verdict:**
-## `PRODUCTION_CANDIDATE_REQUIRES_EXTERNAL_VALIDATION`
+## `REQUEST_CHANGES`
 
 ---
 
 ## 1. Executive Summary & Verification Matrix
 
-All 15 defects identified in the baseline forensic audit (`BASELINE_FINDINGS.md`) have been completely remediated, cross-verified, and validated across local, disposable database, containerized Docker, and live n8n runtime environments.
+Release acceptance is not complete. SQL bootstrap and database-role isolation are verified, but the pinned n8n 2.46.5 image has a Trivy-reported applicable CRITICAL OS-library vulnerability (`CVE-2026-111497`), and the updated Unified Telegram Router has not completed live end-to-end execution on n8n 2.46.5 with provisioned credentials.
 
 | Area / Component | Baseline Status | Post-Remediation Status | Verification Method |
 |---|---|---|---|
 | **Security & Auth** | Unauthenticated endpoints; plaintext secrets | Strict Role Auth (`X-Admin-Token`, `X-Internal-Token`, Bearer), fail-closed, trusted proxy rate limiting (HTTP 429), RAG rate limiter, zero secrets | `tests/unit/test_security_and_safety.py` (14/14 PASS) |
 | **Database & Concurrency** | Race conditions; inconsistent migration SQL | Idempotent PostgreSQL migrations; atomic deduplication; queue leasing `SKIP LOCKED` | `tests/integration/test_real_postgresql_v2.py` (3/3 PASS) |
 | **Email Delivery** | Fake SMTP reporting success | Real `SMTPTransportAdapter` (`smtplib.SMTP`, STARTTLS, structured error handling) | `tests/integration/test_smtp_delivery.py` (6/6 PASS) |
-| **n8n Automation** | `127.0.0.1` container breaks; competing routers | Single active router; parameterized `$env.BUSINESS_API_URL`; offline webhook ingress | `tests/integration/test_n8n_unified_router_live.py` (4/4 PASS) |
+| **n8n Automation** | Vulnerable image and untrusted header forwarding | n8n 2.46.5 digest-pinned; `$env` removed; trusted credentials added | 8/8 workflows import; live router execution remains BLOCKED |
 | **RAG Grounding & Safety** | Hallucinations; hardcoded scores; prompt injection | Strict $\ge 0.55$ threshold; `<retrieved_evidence>` boundaries; dedicated RAG rate limiter; dynamic contact details | `evaluation/rag_eval_results.json` (30 queries evaluated) |
 | **Docker & Operations** | Unverified startup; broken Grafana paths | Chained healthchecks; liveness/readiness probes; read-only rootfs mount fixes | Docker Desktop live stack (10/10 Gates PASS) |
 | **Backup & Recovery** | Mock/unverified backup; PG18/PG16 incompatibility | Real `pg_dump` + `psql` restore with cross-version `transaction_timeout` filtering | `tests/integration/test_backup_restore.py` (2/2 PASS) |
