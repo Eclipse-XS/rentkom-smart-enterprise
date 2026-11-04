@@ -4,26 +4,20 @@
   "nodes": [
     {
       "parameters": {
-        "updates": [
-          "message"
-        ],
-        "additionalFields": {}
+        "httpMethod": "POST",
+        "path": "rentkom-telegram-ingress-webhook",
+        "responseMode": "onReceived",
+        "options": {}
       },
       "id": "u-node-tg-trigger",
       "name": "Telegram Ingress",
-      "type": "n8n-nodes-base.telegramTrigger",
-      "typeVersion": 1.1,
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
       "position": [
         100,
         320
       ],
-      "webhookId": "rentkom-telegram-ingress-webhook",
-      "credentials": {
-        "telegramApi": {
-          "id": "egDthAT3oVlnSRjQ",
-          "name": "Telegram account"
-        }
-      }
+      "webhookId": "rentkom-telegram-ingress-webhook"
     },
     {
       "parameters": {

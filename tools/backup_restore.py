@@ -1,7 +1,9 @@
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Optional
 from urllib.parse import urlparse
@@ -45,6 +47,21 @@ def _parse_pg_url(db_url: str) -> dict:
     }
 
 
+def _sanitize_dump_for_compatibility(sql_path: str) -> None:
+    """
+    Comment out parameters unknown to older PostgreSQL server versions (e.g. transaction_timeout introduced in PG 17+).
+    """
+    try:
+        with open(sql_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        if "transaction_timeout" in content:
+            sanitized = re.sub(r"(?m)^(\s*SET\s+transaction_timeout\s*=.*)$", r"-- \1", content)
+            with open(sql_path, "w", encoding="utf-8") as f:
+                f.write(sanitized)
+    except Exception:
+        pass
+
+
 def backup_postgres_database(db_url: str, output_file: Optional[str] = None) -> str:
     """
     Executes a logical PostgreSQL backup using pg_dump (--no-owner --no-privileges --clean --if-exists).
@@ -86,6 +103,7 @@ def backup_postgres_database(db_url: str, output_file: Optional[str] = None) -> 
     if not os.path.isfile(output_file) or os.path.getsize(output_file) == 0:
         raise RuntimeError(f"pg_dump did not produce a valid non-empty backup file at '{output_file}'.")
 
+    _sanitize_dump_for_compatibility(output_file)
     return output_file
 
 
@@ -98,6 +116,8 @@ def restore_postgres_database(target_db_url: str, backup_file: str) -> None:
 
     if not os.path.isfile(backup_file) or os.path.getsize(backup_file) == 0:
         raise FileNotFoundError(f"Backup file '{backup_file}' does not exist or is empty.")
+
+    _sanitize_dump_for_compatibility(backup_file)
 
     psql_bin = _find_pg_binary("psql")
     conn_info = _parse_pg_url(target_db_url)

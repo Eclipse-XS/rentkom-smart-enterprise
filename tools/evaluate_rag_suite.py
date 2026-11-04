@@ -23,6 +23,8 @@ async def evaluate_dataset() -> Dict[str, Any]:
 
     retrieval_hits = 0
     retrieval_total = 0
+    keyword_hits = 0
+    unnecessary_abstentions = 0
     correct_abstentions = 0
     abstention_total = 0
     unsupported_answers = 0
@@ -35,6 +37,7 @@ async def evaluate_dataset() -> Dict[str, Any]:
         question = item["question"]
         expected_mode = item["expected_mode"]
         expected_sources = set(item.get("expected_sources", []))
+        expected_keywords = [kw.lower() for kw in item.get("expected_keywords", [])]
 
         t0 = time.time()
         res = await query_rag(question)
@@ -43,6 +46,9 @@ async def evaluate_dataset() -> Dict[str, Any]:
 
         actual_sources = set(res.sources or [])
         source_hit = bool(expected_sources & actual_sources) if expected_sources else (len(actual_sources) == 0)
+        ans_lower = (res.answer or "").lower()
+        matched_keywords = [kw for kw in expected_keywords if kw in ans_lower]
+        keyword_hit = len(matched_keywords) > 0 if expected_keywords else True
 
         if expected_mode == "grounded":
             retrieval_total += 1
@@ -51,13 +57,17 @@ async def evaluate_dataset() -> Dict[str, Any]:
             if res.mode == "grounded":
                 grounded_total += 1
                 grounded_latencies.append(elapsed)
-                if len(res.citations) > 0 and all(c.score >= 0.55 for c in res.citations):
+                if keyword_hit:
+                    keyword_hits += 1
+                if len(res.citations) > 0 and source_hit and all(c.score >= 0.55 for c in res.citations):
                     citation_supported += 1
                 else:
                     unsupported_answers += 1
+            else:
+                unnecessary_abstentions += 1
         elif expected_mode == "rejected":
             abstention_total += 1
-            if res.mode == "rejected":
+            if res.mode == "rejected" and keyword_hit:
                 correct_abstentions += 1
             elif res.mode == "grounded":
                 unsupported_answers += 1
@@ -70,12 +80,18 @@ async def evaluate_dataset() -> Dict[str, Any]:
             "actual_mode": res.mode,
             "confidence_score": res.confidence_score,
             "latency_seconds": elapsed,
-            "expected_sources": list(expected_sources),
-            "actual_sources": list(actual_sources),
+            "expected_sources": sorted(list(expected_sources)),
+            "actual_sources": sorted(list(actual_sources)),
             "source_hit": source_hit,
-            "answer_preview": res.answer[:180],
+            "expected_keywords": expected_keywords,
+            "matched_keywords": matched_keywords,
+            "keyword_hit": keyword_hit,
+            "answer_preview": res.answer[:220],
         })
-        print(f"[{qid}] ({category}) mode={res.mode} score={res.confidence_score} latency={elapsed}s hit={source_hit}")
+        print(
+            f"[{qid}] ({category}) mode={res.mode} score={res.confidence_score} "
+            f"latency={elapsed}s src_hit={source_hit} kw_hit={keyword_hit}"
+        )
 
     sorted_lat = sorted(latencies)
     p50 = round(statistics.median(sorted_lat), 3) if sorted_lat else 0.0
@@ -85,6 +101,8 @@ async def evaluate_dataset() -> Dict[str, Any]:
     summary = {
         "total_questions": len(dataset),
         "recall_at_k": round(retrieval_hits / retrieval_total, 4) if retrieval_total else 0.0,
+        "answer_keyword_coverage": round(keyword_hits / retrieval_total, 4) if retrieval_total else 0.0,
+        "unnecessary_abstention_rate": round(unnecessary_abstentions / retrieval_total, 4) if retrieval_total else 0.0,
         "abstention_accuracy": round(correct_abstentions / abstention_total, 4) if abstention_total else 0.0,
         "unsupported_answer_rate": round(unsupported_answers / len(dataset), 4) if dataset else 0.0,
         "citation_support_rate": round(citation_supported / grounded_total, 4) if grounded_total else 0.0,

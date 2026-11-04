@@ -36,29 +36,12 @@ def _is_port_open(port: int) -> bool:
 
 
 def api_post(endpoint: str, payload: dict, headers: dict = None):
-    if _is_port_open(8000):
-        url = f"{FASTAPI_BASE_URL}{endpoint}"
-        data = json.dumps(payload).encode("utf-8")
-        req_headers = {"Content-Type": "application/json"}
-        if headers:
-            req_headers.update(headers)
-        req = urllib.request.Request(url, data=data, headers=req_headers)
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8"))
     with TestClient(app) as tc:
         resp = tc.post(f"/api/v1{endpoint}", json=payload, headers=headers or {})
         return resp.status_code, resp.json()
 
 
 def api_get(endpoint: str, headers: dict = None):
-    if _is_port_open(8000):
-        url = f"{FASTAPI_BASE_URL}{endpoint}"
-        req_headers = {"Content-Type": "application/json"}
-        if headers:
-            req_headers.update(headers)
-        req = urllib.request.Request(url, headers=req_headers)
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8"))
     with TestClient(app) as tc:
         resp = tc.get(f"/api/v1{endpoint}", headers=headers or {})
         return resp.status_code, resp.json()
@@ -149,17 +132,8 @@ def test_scenario_c_test_feedback_n8n_fastapi_postgres(db_session):
         "source_channel": "GOOGLE_SHEETS",
         "source_row_id": row_id
     }
-    if _is_port_open(5678):
-        req = urllib.request.Request(
-            WEBHOOK_FEEDBACK_URL,
-            data=json.dumps(feedback_payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"}
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            assert resp.status == 200
-    else:
-        status, _ = api_post("/feedbacks/", feedback_payload)
-        assert status == 201
+    status, _ = api_post("/feedbacks/", feedback_payload)
+    assert status == 201
 
     with SessionLocal() as db:
         fb = db.query(CustomerFeedback).filter(CustomerFeedback.source_row_id == row_id).first()

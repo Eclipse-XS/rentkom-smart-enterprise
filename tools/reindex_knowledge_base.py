@@ -103,7 +103,7 @@ def _populate_collection(collection_name: str, points: List[dict]) -> int:
         for i in range(0, len(points), batch_size):
             batch = points[i:i + batch_size]
             upload_resp = client.put(
-                f"http://{QDRANT_HOST}:{QDRANT_PORT}/collections/{collection_name}/points",
+                f"http://{QDRANT_HOST}:{QDRANT_PORT}/collections/{collection_name}/points?wait=true",
                 json={"points": batch}
             )
             if upload_resp.status_code not in (200, 201):

@@ -5,20 +5,20 @@ datasources:
     uid: lab5-postgres
     type: postgres
     access: proxy
-    url: "${POSTGRES_HOST:-postgres}:5432"
-    user: "${POSTGRES_USER:-postgres}"
+    url: "${POSTGRES_HOST}:5432"
+    user: "${POSTGRES_USER}"
     isDefault: true
     jsonData:
-      database: "${POSTGRES_DB:-lab4_real_estate}"
+      database: "${POSTGRES_DB}"
       sslmode: disable
       postgresVersion: 1500
       timescaledb: false
     secureJsonData:
-      password: "${POSTGRES_PASSWORD:-postgres}"
+      password: "${POSTGRES_PASSWORD}"
 
   - name: Rentkom Business Core API
     uid: rentkom-core-api
     type: marcusolsson-json-datasource
     access: proxy
-    url: "http://${API_HOST:-business-api}:8000/api/v1/analytics/summary"
+    url: "http://${API_HOST}:8000/api/v1/analytics/summary"
     jsonData: {}

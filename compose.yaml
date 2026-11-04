@@ -58,10 +58,10 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-lab4_real_estate}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-lab4_real_estate}
       NOTIFICATION_PROVIDER: ${NOTIFICATION_PROVIDER:-mock}
       ENVIRONMENT: ${ENVIRONMENT:-demo}
-      OLLAMA_BASE_URL: http://${OLLAMA_HOST:-ollama}:11434
+      OLLAMA_BASE_URL: http://${OLLAMA_HOST:-host.docker.internal}:11434
       QDRANT_HOST: ${DOCKER_QDRANT_HOST:-qdrant}
       QDRANT_PORT: 6333
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rentkom.lviv.ua}
@@ -102,7 +102,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-lab4_real_estate}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-lab4_real_estate}
       NOTIFICATION_PROVIDER: ${NOTIFICATION_PROVIDER:-mock}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rentkom.lviv.ua}
       SMTP_HOST: ${SMTP_HOST:-}
@@ -163,7 +163,7 @@ services:
       - grafana_data:/var/lib/grafana
       - ./SMART_ENTERPRISE/monitoring/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./SMART_ENTERPRISE/monitoring/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
-      - ./SMART_ENTERPRISE/monitoring/dashboards:/etc/grafana/provisioning/dashboards/json:ro
+      - ./SMART_ENTERPRISE/monitoring/dashboards:/var/lib/grafana/dashboards:ro
     networks:
       - rentkom-net
     profiles: ["demo", "connected", "full-ai", "dedicated-worker"]
@@ -195,11 +195,19 @@ services:
       DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       DB_POSTGRESDB_SCHEMA: public
       BUSINESS_API_URL: ${BUSINESS_API_URL:-http://business-api:8000}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-rentkom-demo-internal-key-2026}
+      TEST_WEBHOOK_SECRET: ${TEST_WEBHOOK_SECRET:-rentkom-demo-webhook-secret-2026}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-rentkom-demo-admin-key-2026}
       TELEGRAM_ADMIN_CHAT_ID: ${TELEGRAM_ADMIN_CHAT_ID:-}
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS: "all"
+      EXECUTIONS_DATA_SAVE_ON_ERROR: "all"
+      EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS: "true"
     ports:
       - "5678:5678"
     volumes:
       - n8n_data:/home/node/.n8n
+      - ./SMART_ENTERPRISE/automation/n8n:/workflows:ro
     networks:
       - rentkom-net
     profiles: ["demo", "connected", "full-ai"]

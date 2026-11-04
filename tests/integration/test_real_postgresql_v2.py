@@ -266,9 +266,12 @@ def test_real_postgres_outbox_concurrency_skip_locked(clean_pg_schema):
     def worker_job(worker_id):
         worker_db = Session()
         try:
-            # batch_size=5 so each worker grabs 5 items concurrently
-            res = process_outbox(worker_db, batch_size=5)
-            results.append((worker_id, res))
+            # batch_size=5 so each worker grabs up to 5 items per pass until queue is drained
+            while True:
+                res = process_outbox(worker_db, batch_size=5)
+                results.append((worker_id, res))
+                if res.processed_count == 0:
+                    break
         finally:
             worker_db.close()
 
