@@ -25,6 +25,9 @@
 - **`connected` / `production`**:
   - Примусово вимикає демонстраційні та mock-ендпоінти (`HTTP 403`).
   - Під час старту (`settings.validate_runtime_security()`) перевіряє наявність надійних ключів `ADMIN_API_KEY` та `INTERNAL_API_KEY` (мінімум 24 символи, заборона демо-значень), забороняє `ALLOW_TEST_WEBHOOK=true` та `NOTIFICATION_PROVIDER=mock` у `production`.
+  - Ендпоінт аналітики (`GET /api/v1/analytics/summary`) вимагає авторизації адміністратора (`X-Admin-Token`) або внутрішнього токена.
+  - Анонімні заявки (`POST /api/v1/requests/`) проходять через захисний шлюз неперевірених лідів (HTTP 202 Accepted, opaque submission ID) без розкриття персональних даних клієнтів (SEC-01/02).
+  - База даних підтримує розділення привілеїв: застосунок працює під `rentkom_app`, а n8n має обмежені права `rentkom_n8n` (DATA-05).
 
 ---
 

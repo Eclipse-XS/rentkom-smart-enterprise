@@ -72,7 +72,14 @@ def client(db_session):
         finally:
             db.close()
 
+    from core.security import public_rate_limiter, rag_rate_limiter
+    public_rate_limiter._history.clear()
+    rag_rate_limiter._history.clear()
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        public_rate_limiter._history.clear()
+        rag_rate_limiter._history.clear()
+        app.dependency_overrides.clear()

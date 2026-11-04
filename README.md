@@ -112,7 +112,7 @@ flowchart TD
 | **Outbox Worker** | `rentkom-outbox-worker` | — | `dedicated-worker` (or in-lifespan) | Polls `notification_outbox` using `FOR UPDATE SKIP LOCKED` and dispatches notifications |
 | **Qdrant** | `rentkom-qdrant` (`qdrant/qdrant:v1.12.1`) | `6333` | `demo`, `connected`, `full-ai` | Vector similarity index storing 32 deterministic chunks across 6 agency documents |
 | **Grafana** | `rentkom-grafana` (`grafana/grafana:11.3.0`) | `3000` | `demo`, `connected`, `full-ai` | Pre-provisioned Business Analytics (13 panels) & Operations Monitoring (6 panels) |
-| **n8n** | `rentkom-n8n` (`n8nio/n8n:1.64.3`) | `5678` | `connected`, `full-ai` | Event-driven workflow automation for Telegram, Google Forms, and alerts |
+| **n8n** | `rentkom-n8n` (`n8nio/n8n:1.76.1`) | `5678` | `connected`, `full-ai` | Event-driven workflow automation for Telegram, Google Forms, and alerts |
 | **Ollama** | `rentkom-ollama` (`ollama/ollama:latest`) | `11434` | `full-ai` (or host native) | Local embedding (`mxbai-embed-large`) and chat generation (`qwen3:4b-instruct-2507-q4_K_M`) |
 
 ---
@@ -171,22 +171,24 @@ python tools/manage.py up
 
 | Method & Path | Access Policy | Description |
 |---|---|---|
-| `POST /api/v1/requests/` | Public (Validated) | Submit consultation request, deduplicate customer by E.164 phone, atomically enqueue outbox notifications |
+| `POST /api/v1/requests/` | Public (202 Acknowledgment) / Admin (201 Created) | Submit consultation request. Anonymous requests return 202 with opaque submission_id and no customer PII (SEC-01/02); authenticated admin requests return 201 with full ServiceRequestResponse |
+| `GET /api/v1/leads/` | Admin (`X-Admin-Token` / `Bearer`) | Review unverified inbound lead submissions staged for operator review |
+| `POST /api/v1/leads/{id}/promote` | Admin (`X-Admin-Token` / `Bearer`) | Atomically promote an unverified lead into verified customer & business request workflow with audit |
 | `GET /api/v1/requests/` | Admin (`X-Admin-Token` / `Bearer`) | List customer consultation requests |
 | `GET /api/v1/requests/{id}` | Admin (`X-Admin-Token` / `Bearer`) | Retrieve single consultation request by ID |
-| `PATCH /api/v1/requests/{id}/status` | Admin (`X-Admin-Token` / `Bearer`) | Transition request state (`NEW` -> `IN_REVIEW` -> `SCHEDULED` -> `COMPLETED` / `CANCELLED`) with actor audit |
+| `PATCH /api/v1/requests/{id}/status` | Admin (`X-Admin-Token` / `Bearer`) | Transition request state (`NEW` -> `IN_REVIEW` -> `SCHEDULED` -> `COMPLETED` / `CANCELLED`) with actor audit & CAS conflict detection |
 | `POST /api/v1/feedbacks/` | Public (Validated) | Submit post-service customer rating (1–5) and feedback text |
 | `GET /api/v1/feedbacks/` | Admin (`X-Admin-Token` / `Bearer`) | List customer feedback entries |
 | `GET /api/v1/notifications/outbox` | Admin (`X-Admin-Token` / `Bearer`) | Inspect transactional outbox queue and delivery states |
 | `POST /api/v1/notifications/process` | Internal or Admin (`X-Internal-Token` / `X-Admin-Token`) | Trigger transactional outbox batch processing |
-| `POST /api/v1/telegram/webhook` | Telegram Secret (`X-Telegram-Bot-Api-Secret-Token`) or Internal | Production Telegram webhook ingress |
+| `POST /api/v1/telegram/webhook` | Telegram Secret (`X-Telegram-Bot-Api-Secret-Token`) or Internal | Production Telegram webhook ingress (rate-limited, verified) |
 | `POST /api/v1/telegram/webhook-mock` | Demo/Test Mode Only | Simulated Telegram router endpoint (`403` in `connected`/`production`) |
 | `POST /api/v1/telegram/inbox/guard` | `X-Internal-Token` (or `X-Test-Token` when `is_test=true` in demo) | Acquire atomic idempotency lease in `telegram_inbox` |
 | `POST /api/v1/telegram/inbox/complete` | `X-Internal-Token` (or `X-Test-Token` in demo) | Mark `telegram_inbox` update `COMPLETED` and cache response |
 | `POST /api/v1/telegram/mock-dispatcher` | Demo/Test Mode Only (`X-Test-Token` / `X-Internal-Token`) | Deterministic simulated Telegram message sink |
 | `POST /api/v1/telegram/send-message` | Internal (`X-Internal-Token`), `is_test=false` | Dispatch live message via official Telegram Bot API |
-| `POST /api/v1/rag/ask` | Public (Bounded & Sanitized) | Query grounded RAG assistant over agency documents |
-| `GET /api/v1/analytics/summary` | Public / Grafana JSON | Aggregated operational metrics for Grafana |
+| `POST /api/v1/rag/ask` | Public (Bounded & Sanitized) | Query grounded RAG assistant over agency documents with K=12 multi-doc diversified retrieval |
+| `GET /api/v1/analytics/summary` | Admin / Internal (`X-Admin-Token` / `X-Internal-Token`) | Protected operational metrics for Grafana dashboard |
 | `GET /api/v1/health`, `/health/live`, `/health/ready` | Public | Operational health, liveness (`200`), and DB readiness (`200`/`503`) |
 
 ---
@@ -260,7 +262,7 @@ Grafana (`SMART_ENTERPRISE/monitoring/`) provisions two datasource integrations 
 
 ## 15. Testing Strategy & Commands
 
-The automated test suite comprises **120 automated test cases** across unit, integration, and end-to-end layers:
+The automated test suite comprises **127 automated test cases** across unit, integration, and end-to-end layers:
 
 ```bash
 # 1. Run fast unit, security, and workflow contract tests (60 tests, SQLite in-memory):
@@ -269,7 +271,7 @@ pytest tests/unit -v --tb=short
 # 2. Run SMTP transport & Telegram connected-mode contract tests (20 tests):
 pytest tests/integration/test_smtp_delivery.py tests/integration/test_telegram_connected_mode_contract.py -v --tb=short
 
-# 3. Run full suite including PostgreSQL integration, migrations, backup/restore, and live RAG (120 tests):
+# 3. Run full suite including PostgreSQL integration, migrations, backup/restore, and live RAG (127 tests):
 # Set TEST_DATABASE_URL to an isolated disposable test database (must contain 'test', 'disposable', or 'temp'):
 export TEST_DATABASE_URL="postgresql+psycopg2://postgres@127.0.0.1:5439/rentkom_test"
 pytest tests/ -v --tb=short
@@ -313,6 +315,7 @@ Detailed engineering acceptance evidence is maintained under [`docs/audit/`](doc
 - [`DOCKER_CLEANROOM_ACCEPTANCE.md`](docs/audit/DOCKER_CLEANROOM_ACCEPTANCE.md) — Docker Compose profile validation and host daemon status
 - [`TEST_EVIDENCE.md`](docs/audit/TEST_EVIDENCE.md) — Full test execution logs and assertion inventory
 - [`REMAINING_RISKS.md`](docs/audit/REMAINING_RISKS.md) — Residual operational risks and mitigations
+- [`FINAL_DEFECT_ACCEPTANCE.md`](docs/audit/FINAL_DEFECT_ACCEPTANCE.md) — Remediation matrix and verified evidence for all 20 defect findings (SEC, NOTIF, INT, DATA, OPS, RAG, QA, DOC)
 - [`FINAL_ENGINEERING_REVIEW.md`](docs/audit/FINAL_ENGINEERING_REVIEW.md) — Final engineering scorecard and readiness verdict
 
 ---

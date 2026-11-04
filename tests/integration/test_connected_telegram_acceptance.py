@@ -189,22 +189,27 @@ def test_int_t10_flood_protection_rate_limiting(client, monkeypatch):
     monkeypatch.setattr(settings, "RATE_LIMIT_REQUESTS_PER_MINUTE", 5)
 
     from core.security import public_rate_limiter
-    public_rate_limiter._history.clear()
-    public_rate_limiter.rpm = 5
+    orig_rpm = public_rate_limiter.rpm
+    try:
+        public_rate_limiter._history.clear()
+        public_rate_limiter.rpm = 5
 
-    payload = {
-        "update_id": 880011,
-        "message": {"chat": {"id": 111}, "text": "/start"}
-    }
+        payload = {
+            "update_id": 880011,
+            "message": {"chat": {"id": 111}, "text": "/start"}
+        }
 
-    responses = []
-    for i in range(10):
-        p = dict(payload)
-        p["update_id"] = 880011 + i
-        r = client.post("/api/v1/telegram/webhook-mock", json=p)
-        responses.append(r.status_code)
+        responses = []
+        for i in range(10):
+            p = dict(payload)
+            p["update_id"] = 880011 + i
+            r = client.post("/api/v1/telegram/webhook-mock", json=p)
+            responses.append(r.status_code)
 
-    assert 429 in responses, f"Expected 429 in responses, got {responses}"
+        assert 429 in responses, f"Expected 429 in responses, got {responses}"
+    finally:
+        public_rate_limiter.rpm = orig_rpm
+        public_rate_limiter._history.clear()
 
 
 def test_int_t11_malformed_json_returns_422(client):
