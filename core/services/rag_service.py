@@ -148,7 +148,11 @@ async def query_rag(
     retrieval_succeeded = False
 
     try:
-        normalized_q = normalize_query_for_retrieval(question)
+        prior_user_context = " ".join(
+            item.get("content", "") for item in (history or [])[-6:]
+            if item.get("role") == "user"
+        )
+        normalized_q = normalize_query_for_retrieval(f"{prior_user_context} {question}".strip())
         async with httpx.AsyncClient(timeout=90.0) as client:
             embed_resp = await client.post(
                 f"{settings.OLLAMA_BASE_URL}/api/embeddings",
@@ -242,8 +246,14 @@ async def query_rag(
 
     # Context assembly with untrusted evidence delimiter
     context_str = "\n\n---\n\n".join(retrieved_chunks)
+    history_text = "\n".join(
+        f"{('Клієнт' if item.get('role') == 'user' else 'Консультант')}: {item.get('content', '')}"
+        for item in (history or [])[-12:]
+        if item.get("role") in ("user", "assistant") and item.get("content")
+    )
     user_prompt = (
         f"<retrieved_evidence>\n{context_str}\n</retrieved_evidence>\n\n"
+        f"<conversation_history>\n{history_text}\n</conversation_history>\n\n"
         f"Запитання клієнта: {question}\nВідповідь:"
     )
 

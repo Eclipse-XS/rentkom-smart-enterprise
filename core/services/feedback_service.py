@@ -3,9 +3,10 @@ from core.models import CustomerFeedback, Customer, AuditEvent
 from core.schemas import CustomerFeedbackCreate
 
 def create_customer_feedback(db: Session, feedback_in: CustomerFeedbackCreate) -> CustomerFeedback:
-    if feedback_in.source_row_id:
+    source_row_id = feedback_in.source_row_id.strip() if feedback_in.source_row_id and feedback_in.source_row_id.strip() else None
+    if source_row_id:
         existing = db.query(CustomerFeedback).filter(
-            CustomerFeedback.source_row_id == feedback_in.source_row_id
+            CustomerFeedback.source_row_id == source_row_id
         ).first()
         if existing:
             return existing
@@ -22,7 +23,7 @@ def create_customer_feedback(db: Session, feedback_in: CustomerFeedbackCreate) -
         service_rating=feedback_in.service_rating,
         realtor_rating=feedback_in.realtor_rating,
         feedback_text=feedback_in.feedback_text.strip() if feedback_in.feedback_text else None,
-        source_row_id=feedback_in.source_row_id,
+        source_row_id=source_row_id,
         source_channel=feedback_in.source_channel
     )
     db.add(feedback)

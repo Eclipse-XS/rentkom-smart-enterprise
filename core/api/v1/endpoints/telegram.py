@@ -70,8 +70,8 @@ def set_telegram_bot_mode(mode: str, db: Session) -> tuple[str, bool]:
 
 LR2_REPLY_KEYBOARD = {
     "keyboard": [[
-        {"text": "🏢 Процес купівлі/продажу"},
-        {"text": "🔑 Послуги для орендодавців"},
+        {"text": "Процес купівлі/продажу"},
+        {"text": "Послуги для орендодавців"},
     ]],
     "resize_keyboard": True,
 }
@@ -81,6 +81,13 @@ MODE_SELECTOR_KEYBOARD = {
     "inline_keyboard": [[
         {"text": "ЛР2 — Сценарний бот", "callback_data": "mode:LR2"},
         {"text": "ЛР6 — AI-асистент", "callback_data": "mode:LR6"},
+    ]]
+}
+LR3_NOTIFICATIONS_KEY = "lr3_telegram_notifications_enabled"
+NOTIFICATIONS_KEYBOARD = {
+    "inline_keyboard": [[
+        {"text": "Увімкнути", "callback_data": "notifications:ON"},
+        {"text": "Вимкнути", "callback_data": "notifications:OFF"},
     ]]
 }
 MODE_NOTIFICATION_TEXT = {
@@ -102,6 +109,34 @@ def get_mode_notification(mode: str) -> tuple[str, Dict[str, Any]]:
         MODE_NOTIFICATION_TEXT[mode],
         LR2_REPLY_KEYBOARD if mode == "LR2" else LR6_REPLY_KEYBOARD_REMOVE,
     )
+
+
+def get_lr3_notifications_enabled(db: Session) -> bool:
+    from core.models import SystemConfig
+    row = db.query(SystemConfig).filter(SystemConfig.key == LR3_NOTIFICATIONS_KEY).first()
+    if not row:
+        db.add(SystemConfig(key=LR3_NOTIFICATIONS_KEY, value="false"))
+        db.commit()
+        return False
+    return row.value.strip().lower() in ("true", "1", "yes", "on")
+
+
+def set_lr3_notifications_enabled(enabled: bool, db: Session) -> bool:
+    from core.models import SystemConfig
+    row = db.query(SystemConfig).filter(SystemConfig.key == LR3_NOTIFICATIONS_KEY).first()
+    value = "true" if enabled else "false"
+    if row and row.value == value:
+        return False
+    if row:
+        row.value = value
+    else:
+        db.add(SystemConfig(key=LR3_NOTIFICATIONS_KEY, value=value))
+    db.commit()
+    return True
+
+
+def notifications_status_text(enabled: bool) -> str:
+    return f"Сповіщення ЛР3: {'увімкнено' if enabled else 'вимкнено'}."
 
 
 async def send_mode_notification(chat_id: int, mode: str) -> Optional[int]:
@@ -165,6 +200,22 @@ async def telegram_mode_control(
     authorized = _is_authorized_telegram_admin(req.telegram_user_id, req.chat_id)
     callback_answered = False
 
+    public_form_actions = {
+        "SHOW_CONSULTATION_FORM": settings.LR4_CONSULTATION_FORM_URL,
+        "SHOW_FEEDBACK_FORM": settings.LR3_FEEDBACK_FORM_URL,
+    }
+    if req.action in public_form_actions:
+        text = public_form_actions[req.action]
+        if not req.is_test:
+            sent = await _telegram_api("sendMessage", {"chat_id": req.chat_id, "text": text})
+            message_id = (sent.get("result") or {}).get("message_id")
+        else:
+            message_id = None
+        return TelegramModeControlResponse(
+            status="FORM_LINK_SENT", action=req.action, authorized=authorized,
+            notification_message_id=message_id, response_text=text,
+        )
+
     if req.callback_query_id and not req.is_test:
         answer_text = None if authorized else "Недостатньо прав для зміни режиму."
         await _telegram_api(
@@ -210,6 +261,48 @@ async def telegram_mode_control(
             authorized=True, notification_message_id=message_id, response_text=text,
         )
 
+    if req.action == "SHOW_NOTIFICATIONS":
+        enabled = get_lr3_notifications_enabled(db)
+        text = notifications_status_text(enabled)
+        if not req.is_test:
+            sent = await _telegram_api(
+                "sendMessage",
+                {"chat_id": req.chat_id, "text": text, "reply_markup": NOTIFICATIONS_KEYBOARD},
+            )
+            message_id = (sent.get("result") or {}).get("message_id")
+        else:
+            message_id = None
+        return TelegramModeControlResponse(
+            status="NOTIFICATIONS_STATUS_SENT", action=req.action, authorized=True,
+            notification_message_id=message_id, response_text=text,
+        )
+
+    if req.action == "SET_NOTIFICATIONS" and req.callback_data in ("notifications:ON", "notifications:OFF"):
+        enabled = req.callback_data.endswith(":ON")
+        changed = set_lr3_notifications_enabled(enabled, db)
+        text = notifications_status_text(enabled)
+        if not req.is_test:
+            if not req.message_id:
+                raise HTTPException(status_code=400, detail="Notification callback is missing message_id")
+            if changed:
+                await _telegram_api(
+                    "editMessageText",
+                    {
+                        "chat_id": req.chat_id,
+                        "message_id": req.message_id,
+                        "text": text,
+                        "reply_markup": NOTIFICATIONS_KEYBOARD,
+                    },
+                )
+            message_id = req.message_id
+        else:
+            message_id = None
+        return TelegramModeControlResponse(
+            status="SUCCESS" if changed else "UNCHANGED", action=req.action,
+            changed=changed, authorized=True, callback_answered=callback_answered,
+            notification_message_id=message_id, response_text=text,
+        )
+
     if req.action != "SELECT_MODE" or req.callback_data not in ("mode:LR2", "mode:LR6"):
         raise HTTPException(status_code=400, detail="Invalid Telegram mode control action")
 
@@ -249,6 +342,19 @@ async def telegram_mode_control(
         authorized=True, callback_answered=callback_answered,
         notification_message_id=message_id, response_text=text,
     )
+
+
+@router.get("/lr3-notifications")
+def get_lr3_notifications(
+    x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    db: Session = Depends(get_db),
+):
+    internal_key = get_effective_internal_key()
+    token = x_internal_token or _extract_bearer(authorization)
+    if not (internal_key and token and constant_time_equals(token, internal_key)):
+        raise HTTPException(status_code=403, detail="Forbidden: requires valid internal token")
+    return {"enabled": get_lr3_notifications_enabled(db)}
 
 
 @router.get("/mode", response_model=TelegramModeResponse)
@@ -318,21 +424,30 @@ class TelegramResponseMock(BaseModel):
     is_duplicate: bool = False
 
 
-START_MENU_TEXT = """Вітаємо у чат-боті агентства нерухомості «Рентком» (м. Львів)!
-Оберіть потрібний розділ меню або введіть будь-яке запитання щодо нерухомості."""
+START_MENU_TEXT = """Вітаємо у навчальному чат-боті агентства нерухомості «Рентком»!
+Оберіть потрібний розділ:"""
 
-BUY_PROCESS_TEXT = """🏢 Процес купівлі/продажу нерухомості у «Рентком»:
-1. Первинна консультація та формування вимог.
-2. Підбір об'єктів та організація переглядів.
-3. 6-етапна юридична перевірка правовстановлюючих документів.
-4. Укладення попереднього договору та нотаріальне посвідчення угоди.
-5. Акт приймання-передачі та розрахунок."""
+BUY_PROCESS_TEXT = """Процес купівлі/продажу:
 
-RENT_SERVICES_TEXT = """🔑 Послуги для орендодавців:
-- Професійна фотозйомка та реклама об'єкта.
-- Перевірка платоспроможності орендарів.
-- Підготовка типового договору оренди.
-- Супровід передачі об'єкта та складання опису майна."""
+1. Звернення та визначення потреб: бюджет, район, тип об'єкта, площа, кількість кімнат і строки.
+2. Підбір об'єктів за визначеними критеріями.
+3. Узгодження та проведення переглядів.
+4. Вибір відповідного об'єкта.
+5. Перевірка необхідних документів компетентним фахівцем.
+6. Переговори щодо ціни, строків і умов розрахунку.
+7. Підготовка угоди: за потреби завдаток, договір, нотаріальне оформлення та розрахунок.
+8. Передача об'єкта і ключів, завершення угоди."""
+
+RENT_SERVICES_TEXT = """Послуги для орендодавців у навчальному сценарії:
+
+• консультація та визначення умов здачі;
+• підготовка і презентація об'єкта;
+• розміщення та просування пропозиції;
+• пошук потенційного орендаря і первинний відбір кандидатів;
+• організація переглядів та погодження умов;
+• підготовка інформації і документів для оформлення;
+• супровід укладення договору та передачі об'єкта;
+• подальша комунікація й координація питань у межах управління об'єктом."""
 
 FALLBACK_TEXT = "Вибачте, сервіс консультацій тимчасово недоступний. Будь ласка, зверніться до нашого чергового рієлтора за телефоном +38 (032) 240-00-00."
 
@@ -395,13 +510,11 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
                 res = TelegramResponseMock(
                     route="Купівля/Продаж",
                     response_text=BUY_PROCESS_TEXT,
-                    reply_markup={"inline_keyboard": [[{"text": "Замовити консультацію", "callback_data": "consult_buy"}]]}
                 )
             elif any(k in text_content.lower() for k in ["орендодавц", "послуги для орендодавців"]):
                 res = TelegramResponseMock(
                     route="Орендодавцям",
                     response_text=RENT_SERVICES_TEXT,
-                    reply_markup={"inline_keyboard": [[{"text": "Здати об'єкт", "callback_data": "rent_out"}]]}
                 )
             else:
                 # LR2 RULE-BASED FALLBACK: Strictly deterministic, NEVER invokes RAG!
@@ -593,11 +706,20 @@ async def acquire_telegram_inbox_guard(
     telegram_user_id = (callback.get("from") or {}).get("id") or (msg.get("from") or {}).get("id")
     callback_query_id = callback.get("id")
     callback_data = callback.get("data")
+    message_id = msg.get("message_id")
     normalized_text = text_content.strip().lower()
     if callback_data in ("mode:LR2", "mode:LR6"):
         mode_action = "SELECT_MODE"
+    elif callback_data in ("notifications:ON", "notifications:OFF"):
+        mode_action = "SET_NOTIFICATIONS"
     elif normalized_text == "/mode":
         mode_action = "SHOW_SELECTOR"
+    elif normalized_text == "/notifications":
+        mode_action = "SHOW_NOTIFICATIONS"
+    elif normalized_text == "/consultation":
+        mode_action = "SHOW_CONSULTATION_FORM"
+    elif normalized_text == "/feedback":
+        mode_action = "SHOW_FEEDBACK_FORM"
     elif normalized_text.startswith("/mode "):
         mode_action = "DEPRECATED_COMMAND"
     else:
@@ -649,6 +771,7 @@ async def acquire_telegram_inbox_guard(
         telegram_user_id=telegram_user_id,
         callback_query_id=callback_query_id,
         callback_data=callback_data,
+        message_id=message_id,
     )
 
 

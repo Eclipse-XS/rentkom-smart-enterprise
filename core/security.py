@@ -213,7 +213,15 @@ async def check_public_rate_limit(request: Request):
     if not getattr(settings, "RATE_LIMIT_ENABLED", True):
         return
 
+    # Internal automation services (n8n or trusted internal network) bypass public abuse throttle
+    internal_key = request.headers.get("X-Internal-Secret") or request.headers.get("X-Admin-Key")
+    if internal_key and (internal_key == settings.INTERNAL_API_KEY or internal_key == settings.ADMIN_API_KEY):
+        return
+
     client_ip = get_client_ip(request)
+    if client_ip in ("127.0.0.1", "::1", "localhost") or client_ip.startswith("172.") or client_ip.startswith("10."):
+        return
+
     allowed, retry_after = public_rate_limiter.acquire(client_ip)
     if not allowed:
         raise HTTPException(

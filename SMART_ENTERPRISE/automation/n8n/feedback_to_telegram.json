@@ -1,9 +1,9 @@
 {
-  "updatedAt": "2026-10-28T14:15:00.000Z",
+  "updatedAt": "2026-11-05T14:10:00.000Z",
   "createdAt": "2026-10-07T22:43:57.367Z",
   "id": "gaPyYUSgGKVK2vKc",
   "name": "Rentkom: Customer Feedback Ingestion & Telegram Channel Alert",
-  "description": "Google Form / Sheets Feedback to PostgreSQL customer_feedbacks with Telegram notifications",
+  "description": "Google Forms / Sheets feedback with optional Telegram administrator notifications",
   "active": true,
   "isArchived": false,
   "nodes": [
@@ -67,14 +67,12 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "http://business-api:8000/api/v1/feedbacks/",
-        "sendBody": true,
-        "contentType": "json",
-        "specifyBody": "json",
-        "jsonBody": "={{ { client_identifier: ($json.body && $json.body[\"Ім’я клієнта\"]) ? $json.body[\"Ім’я клієнта\"] : ($json[\"Ім’я клієнта\"]) ? $json[\"Ім’я клієнта\"] : ($json.body && $json.body.client_identifier) ? $json.body.client_identifier : $json.client_identifier ? $json.client_identifier : 'Анонімний клієнт', service_rating: (($json.body && $json.body[\"Оцінка сервісу\"] !== undefined) ? Number($json.body[\"Оцінка сервісу\"]) : ($json[\"Оцінка сервісу\"] !== undefined) ? Number($json[\"Оцінка сервісу\"]) : ($json.body && $json.body.service_rating !== undefined) ? Number($json.body.service_rating) : ($json.service_rating !== undefined) ? Number($json.service_rating) : null), realtor_rating: (($json.body && $json.body[\"Оцінка рієлтора\"] !== undefined) ? Number($json.body[\"Оцінка рієлтора\"]) : ($json[\"Оцінка рієлтора\"] !== undefined) ? Number($json[\"Оцінка рієлтора\"]) : ($json.body && $json.body.realtor_rating !== undefined) ? Number($json.body.realtor_rating) : ($json.realtor_rating !== undefined) ? Number($json.realtor_rating) : null), feedback_text: (($json.body && $json.body[\"Що було зручно?\"]) ? 'Зручно: ' + $json.body[\"Що було зручно?\"] + '. ' : ($json[\"Що було зручно?\"]) ? 'Зручно: ' + $json[\"Що було зручно?\"] + '. ' : '') + (($json.body && $json.body[\"Що викликало труднощі?\"]) ? 'Труднощі: ' + $json.body[\"Що викликало труднощі?\"] : ($json[\"Що викликало труднощі?\"]) ? 'Труднощі: ' + $json[\"Що викликало труднощі?\"] : '') || ($json.body && $json.body.feedback_text ? $json.body.feedback_text : $json.feedback_text ? $json.feedback_text : ''), source_channel: 'GOOGLE_SHEETS', source_row_id: String(($json.body && $json.body.row_number) ? $json.body.row_number : $json.row_number ? $json.row_number : ($json.body && $json.body.id) ? $json.body.id : $json.id ? $json.id : '') } }}",
+        "method": "GET",
+        "url": "http://business-api:8000/api/v1/telegram/lr3-notifications",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "options": {
-          "timeout": 15000
+          "timeout": 60000
         }
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -83,13 +81,53 @@
         280,
         90
       ],
-      "id": "u-node-persist-feedback-pg",
-      "name": "Persist Feedback to PostgreSQL API"
+      "id": "u-node-get-lr3-notifications",
+      "name": "Get LR3 Notification Setting",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomInternalAuth",
+          "name": "Rentkom Internal Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "lr3-notifications-enabled",
+              "leftValue": "={{ $json.enabled }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        500,
+        90
+      ],
+      "id": "u-node-lr3-notifications-enabled",
+      "name": "LR3 Notifications Enabled?"
     },
     {
       "parameters": {
         "chatId": "={{ $vars.TELEGRAM_ADMIN_CHAT_ID || '' }}",
-        "text": "=🌟 *Новий відгук про агентство нерухомості «Рентком»*\n\nКлієнт: {{$json.client_identifier}}\nОцінка сервісу: {{$json.service_rating}}/5 ⭐\nОцінка рієлтора: {{$json.realtor_rating}}/5 ⭐\nКоментар: {{$json.feedback_text || 'Без додаткового коментаря'}}\nСтатус збереження: Успішно збережено в системі (ID: {{$json.id}})",
+        "text": "={{ (() => { const src = $('Google Sheets Trigger').isExecuted ? $('Google Sheets Trigger').item.json : $('Test Feedback Webhook').item.json; const data = src.body || src; const value = (...keys) => { for (const key of keys) { const v = data[key]; if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim(); } return 'Недоступно'; }; return `🌟 *Новий відгук про агентство нерухомості «Рентком»*\\n\\nКлієнт: ${value('Ім’я клієнта', 'client_identifier', 'author_name')}\\nТип звернення: ${value('Тип звернення', 'request_type')}\\nОцінка сервісу: ${value('Оцінка сервісу', 'service_rating', 'rating')}/5 ⭐\\nОцінка рієлтора: ${value('Оцінка рієлтора', 'realtor_rating', 'rating')}/5 ⭐\\nЩо було зручно: ${value('Що було зручно?', 'convenience_feedback')}\\nЩо викликало труднощі: ${value('Що викликало труднощі?', 'difficulties')}\\nМожливість порекомендувати: ${value('Можливість порекомендувати', 'recommendation_likelihood')}\\nДата звернення: ${value('Дата звернення', 'request_date', 'Відмітка часу', 'Отметка времени')}`; })() }}",
         "additionalFields": {
           "parse_mode": "Markdown"
         }
@@ -97,7 +135,7 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        540,
+        760,
         90
       ],
       "id": "0a1e7755-0d83-4afe-b817-5a819d2818ee",
@@ -116,7 +154,7 @@
       "main": [
         [
           {
-            "node": "Persist Feedback to PostgreSQL API",
+            "node": "Get LR3 Notification Setting",
             "type": "main",
             "index": 0
           }
@@ -127,14 +165,25 @@
       "main": [
         [
           {
-            "node": "Persist Feedback to PostgreSQL API",
+            "node": "Get LR3 Notification Setting",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Persist Feedback to PostgreSQL API": {
+    "Get LR3 Notification Setting": {
+      "main": [
+        [
+          {
+            "node": "LR3 Notifications Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LR3 Notifications Enabled?": {
       "main": [
         [
           {
@@ -142,12 +191,12 @@
             "type": "main",
             "index": 0
           }
-        ]
+        ],
+        []
       ]
     }
   },
   "settings": {
-    "executionOrder": "v1",
-    "saveManualExecutions": true
+    "executionOrder": "v1"
   }
 }

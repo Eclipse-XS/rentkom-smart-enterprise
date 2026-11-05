@@ -173,7 +173,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { action: $json.mode_action, chat_id: $json.chat_id, telegram_user_id: $json.telegram_user_id, callback_query_id: $json.callback_query_id, callback_data: $json.callback_data, is_test: $json.is_test } }}",
+        "jsonBody": "={{ { action: $json.mode_action, chat_id: $json.chat_id, telegram_user_id: $json.telegram_user_id, callback_query_id: $json.callback_query_id, callback_data: $json.callback_data, message_id: $json.message_id, is_test: $json.is_test } }}",
         "options": {
           "timeout": 15000
         },
@@ -309,7 +309,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { question: $('Acquire Telegram Inbox Guard').item.json.text } }}",
+        "jsonBody": "={{ { question: $('Acquire Telegram Inbox Guard').item.json.text, session_id: String($('Acquire Telegram Inbox Guard').item.json.chat_id), typing_chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id } }}",
         "options": {
           "timeout": 90000
         }
@@ -452,7 +452,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Вітаємо в інформаційній системі агентства нерухомості «Рентком» (м. Львів)!\\n\\nОберіть потрібний розділ із меню нижче:', reply_markup: { keyboard: [[{text: '🏢 Процес купівлі/продажу'}, {text: '🔑 Послуги для орендодавців'}]], resize_keyboard: true } } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Вітаємо у навчальному чат-боті агентства нерухомості «Рентком»!\\nОберіть потрібний розділ:', reply_markup: { keyboard: [[{text: 'Процес купівлі/продажу'}, {text: 'Послуги для орендодавців'}]], resize_keyboard: true } } }}",
         "options": {
           "timeout": 15000
         },
@@ -481,7 +481,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: '🏢 *Процес купівлі нерухомості у «Рентком»:*\\n\\n1. Формування запиту та бюджету.\\n2. Підбір актуальних пропозицій.\\n3. Організація оглядів об’єктів.\\n4. Перевірка правовстановлюючих документів та ланцюга набуття.\\n5. Узгодження завдатку, нотаріальне посвідчення угоди.\\n6. Акт приймання-передачі та ключі.', reply_markup: { inline_keyboard: [[{text: 'Замовити консультацію', callback_data: 'consult_buy'}]] } } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Процес купівлі/продажу:\\n\\n1. Звернення та визначення потреб: бюджет, район, тип об’єкта, площа, кількість кімнат і строки.\\n2. Підбір об’єктів за визначеними критеріями.\\n3. Узгодження та проведення переглядів.\\n4. Вибір відповідного об’єкта.\\n5. Перевірка необхідних документів компетентним фахівцем.\\n6. Переговори щодо ціни, строків і умов розрахунку.\\n7. Підготовка угоди: за потреби завдаток, договір, нотаріальне оформлення та розрахунок.\\n8. Передача об’єкта і ключів, завершення угоди.' } }}",
         "options": {
           "timeout": 15000
         },
@@ -510,7 +510,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: '🔑 *Послуги для орендодавців:*\\n\\n• Професійна фотозйомка та презентація об’єкта;\\n• Таргетоване просування та відбір орендарів;\\n• Юридичний супровід договору оренди та опис майна;\\n• Подальша підтримка та управління орендою.', reply_markup: { inline_keyboard: [[{text: 'Здати об\\'єкт', callback_data: 'rent_out'}]] } } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Послуги для орендодавців у навчальному сценарії:\\n\\n• консультація та визначення умов здачі;\\n• підготовка і презентація об’єкта;\\n• розміщення та просування пропозиції;\\n• пошук потенційного орендаря і первинний відбір кандидатів;\\n• організація переглядів та погодження умов;\\n• підготовка інформації і документів для оформлення;\\n• супровід укладення договору та передачі об’єкта;\\n• подальша комунікація й координація питань у межах управління об’єктом.' } }}",
         "options": {
           "timeout": 15000
         },
@@ -539,7 +539,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Не вдалося розпізнати запит.\\n\\nЯ можу надати інформацію про:\\n• процес купівлі/продажу;\\n• послуги для орендодавців.\\n\\nБудь ласка, скористайтеся кнопками меню нижче.', reply_markup: { keyboard: [[{text: '🏢 Процес купівлі/продажу'}, {text: '🔑 Послуги для орендодавців'}]], resize_keyboard: true } } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Не вдалося розпізнати запит.\\n\\nЯ можу надати інформацію про:\\n• процес купівлі/продажу;\\n• послуги для орендодавців.\\n\\nСкористайтеся кнопками меню або надішліть /start.', reply_markup: { keyboard: [[{text: 'Процес купівлі/продажу'}, {text: 'Послуги для орендодавців'}]], resize_keyboard: true } } }}",
         "options": {
           "timeout": 15000
         },

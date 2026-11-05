@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     TELEGRAM_SECRET_TOKEN: Optional[str] = os.getenv("TELEGRAM_SECRET_TOKEN", None)
     TELEGRAM_ADMIN_CHAT_ID: Optional[str] = os.getenv("TELEGRAM_ADMIN_CHAT_ID", None)
     TELEGRAM_ADMIN_USER_ID: Optional[str] = os.getenv("TELEGRAM_ADMIN_USER_ID", None)
+    LR3_FEEDBACK_FORM_URL: str = os.getenv(
+        "LR3_FEEDBACK_FORM_URL",
+        "https://docs.google.com/forms/d/e/1FAIpQLSd6DMgilLM6j9GtPlkBCDEy8Era5QTevu-vNNxsSwyTsNR-HA/viewform",
+    )
+    LR4_CONSULTATION_FORM_URL: str = os.getenv(
+        "LR4_CONSULTATION_FORM_URL",
+        "https://docs.google.com/forms/d/e/1FAIpQLScjfHylsJMnU9nmxP9XCoiZx1HPIWGqUydvBMteWDxuJcgQGw/viewform",
+    )
     ALLOW_TEST_WEBHOOK: bool = os.getenv("ALLOW_TEST_WEBHOOK", "true").lower() in ("true", "1", "yes")
 
     # Agency Contact & Support Settings (Configurable fallbacks)

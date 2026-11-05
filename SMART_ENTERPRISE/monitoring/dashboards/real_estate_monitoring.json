@@ -12,7 +12,7 @@
     {
       "datasource": {
         "type": "marcusolsson-json-datasource",
-        "uid": "rentkom-core-api"
+        "uid": "rentkom-lr3-sheets"
       },
       "description": "Середнє значення поля service_rating із фактичної відповіді API.",
       "fieldConfig": {
@@ -78,7 +78,7 @@
           "cacheDurationSeconds": 30,
           "datasource": {
             "type": "marcusolsson-json-datasource",
-            "uid": "rentkom-core-api"
+            "uid": "rentkom-lr3-sheets"
           },
           "fields": [
             {
@@ -101,7 +101,7 @@
     {
       "datasource": {
         "type": "marcusolsson-json-datasource",
-        "uid": "rentkom-core-api"
+        "uid": "rentkom-lr3-sheets"
       },
       "description": "Середнє значення поля realtor_rating із фактичної відповіді API.",
       "fieldConfig": {
@@ -167,7 +167,7 @@
           "cacheDurationSeconds": 30,
           "datasource": {
             "type": "marcusolsson-json-datasource",
-            "uid": "rentkom-core-api"
+            "uid": "rentkom-lr3-sheets"
           },
           "fields": [
             {
@@ -190,7 +190,7 @@
     {
       "datasource": {
         "type": "marcusolsson-json-datasource",
-        "uid": "rentkom-core-api"
+        "uid": "rentkom-lr3-sheets"
       },
       "description": "Кількість фактичних відповідей із поля responses API.",
       "fieldConfig": {
@@ -247,7 +247,7 @@
           "cacheDurationSeconds": 30,
           "datasource": {
             "type": "marcusolsson-json-datasource",
-            "uid": "rentkom-core-api"
+            "uid": "rentkom-lr3-sheets"
           },
           "fields": [
             {
@@ -270,7 +270,7 @@
     {
       "datasource": {
         "type": "marcusolsson-json-datasource",
-        "uid": "rentkom-core-api"
+        "uid": "rentkom-lr3-sheets"
       },
       "description": "Фактичні середні оцінки за датами. Наразі джерело містить одну дату спостереження; точки показано без штучного продовження ряду.",
       "fieldConfig": {
@@ -371,7 +371,7 @@
           "cacheDurationSeconds": 0,
           "datasource": {
             "type": "marcusolsson-json-datasource",
-            "uid": "rentkom-core-api"
+            "uid": "rentkom-lr3-sheets"
           },
           "fields": [
             {

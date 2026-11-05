@@ -143,18 +143,30 @@ def test_int_t07_active_workflows_http_nodes_target_valid_api_paths():
 
 
 def test_int_t08_unified_router_dispatches_to_rag(client):
-    """INT-T08: Unified router correctly dispatches to RAG and returns structured response."""
-    payload = {
-        "update_id": 100008,
-        "message": {
-            "chat": {"id": 12345},
-            "text": "Які послуги надає агентство нерухомості Рентком?"
+    """INT-T08: Unified router correctly dispatches to RAG and returns structured response in LR6 mode."""
+    client.post(
+        "/api/v1/telegram/mode",
+        json={"mode": "LR6"},
+        headers={"X-Internal-Token": settings.INTERNAL_API_KEY}
+    )
+    try:
+        payload = {
+            "update_id": 100008,
+            "message": {
+                "chat": {"id": 12345},
+                "text": "Які послуги надає агентство нерухомості Рентком?"
+            }
         }
-    }
-    resp = client.post("/api/v1/telegram/webhook-mock", json=payload)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["route"] in ("AI RAG Agent", "Fallback Service")
+        resp = client.post("/api/v1/telegram/webhook-mock", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["route"] in ("AI RAG Agent", "Fallback Service")
+    finally:
+        client.post(
+            "/api/v1/telegram/mode",
+            json={"mode": "LR2"},
+            headers={"X-Internal-Token": settings.INTERNAL_API_KEY}
+        )
     assert len(data["response_text"]) > 20
     assert "sources" in data
     assert "confidence_score" in data

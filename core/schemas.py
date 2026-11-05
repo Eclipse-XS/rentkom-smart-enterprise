@@ -145,6 +145,8 @@ class SourceCitation(BaseModel):
 class RAGQueryRequest(BaseModel):
     question: str = Field(..., min_length=2)
     conversation_history: Optional[List[Dict[str, str]]] = None
+    session_id: Optional[str] = Field(None, max_length=100)
+    typing_chat_id: Optional[int] = None
 
 class RAGQueryResponse(BaseModel):
     answer: str
@@ -176,6 +178,7 @@ class TelegramInboxGuardResponse(BaseModel):
     telegram_user_id: Optional[int] = None
     callback_query_id: Optional[str] = None
     callback_data: Optional[str] = None
+    message_id: Optional[int] = None
 
 class TelegramModeControlRequest(BaseModel):
     action: str
@@ -183,6 +186,7 @@ class TelegramModeControlRequest(BaseModel):
     telegram_user_id: int
     callback_query_id: Optional[str] = None
     callback_data: Optional[str] = None
+    message_id: Optional[int] = None
     is_test: bool = False
 
 class TelegramModeControlResponse(BaseModel):

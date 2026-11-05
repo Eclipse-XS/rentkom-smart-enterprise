@@ -1,12 +1,31 @@
 {
   "id": "LAB4RealEstate01",
   "name": "LAB4 | Агентство нерухомості | Forms to PostgreSQL and Gmail",
+  "active": true,
   "nodes": [
     {
       "parameters": {
-        "pollTimes": {"item": [{"mode": "everyMinute"}]},
-        "documentId": {"__rl": true, "value": "19yHm6hi7G2b8s3y8pFVSoCn8m3HiWJDlFr_CdXMnoUg", "mode": "list", "cachedResultName": "LAB4_RealEstate_Requests", "cachedResultUrl": "https://docs.google.com/spreadsheets/d/19yHm6hi7G2b8s3y8pFVSoCn8m3HiWJDlFr_CdXMnoUg/edit"},
-        "sheetName": {"__rl": true, "value": 567687119, "mode": "list", "cachedResultName": "Відповіді на форму (1)", "cachedResultUrl": "https://docs.google.com/spreadsheets/d/19yHm6hi7G2b8s3y8pFVSoCn8m3HiWJDlFr_CdXMnoUg/edit#gid=567687119"},
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "documentId": {
+          "__rl": true,
+          "value": "19yHm6hi7G2b8s3y8pFVSoCn8m3HiWJDlFr_CdXMnoUg",
+          "mode": "list",
+          "cachedResultName": "LAB4_RealEstate_Requests",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/19yHm6hi7G2b8s3y8pFVSoCn8m3HiWJDlFr_CdXMnoUg/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 567687119,
+          "mode": "list",
+          "cachedResultName": "Відповіді на форму (1)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/19yHm6hi7G2b8s3y8pFVSoCn8m3HiWJDlFr_CdXMnoUg/edit#gid=567687119"
+        },
         "event": "rowAdded",
         "options": {}
       },
@@ -14,17 +33,53 @@
       "name": "Google Sheets Trigger",
       "type": "n8n-nodes-base.googleSheetsTrigger",
       "typeVersion": 1,
-      "position": [-560, 240]
+      "position": [
+        -560,
+        200
+      ],
+      "credentials": {
+        "googleSheetsTriggerOAuth2Api": {
+          "id": "w2ZVcryJf7CxkU0H",
+          "name": "Google Sheets | OI43 Lab3"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const allowedPurpose = new Set(['Хочу купити','Хочу орендувати','Хочу продати','Хочу здати в оренду']);\nconst allowedType = new Set(['Квартира','Будинок','Комерційне приміщення','Земля']);\nconst required = (name) => { const v = String($json[name] ?? '').trim(); if (!v) throw new Error(`Порожнє обов'язкове поле: ${name}`); return v; };\nconst full_name = required('ПІБ');\nconst phone = required('Контактний телефон');\nif (!/^\\+?[0-9 ()-]{10,20}$/.test(phone)) throw new Error('Неприпустимий формат телефону');\nconst request_purpose = required('Ціль запиту');\nconst property_type = required('Тип нерухомості');\nif (!allowedPurpose.has(request_purpose)) throw new Error('Неприпустима ціль запиту');\nif (!allowedType.has(property_type)) throw new Error('Неприпустимий тип нерухомості');\nconst property_location = required(\"Місцезнаходження об'єкта\");\nconst rawDate = required('Бажана дата консультації');\nlet consultation_date;\nlet m = rawDate.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);\nif (m) consultation_date = rawDate; else { m = rawDate.match(/^(\\d{2})[./](\\d{2})[./](\\d{4})$/); if (!m) throw new Error('Неприпустимий формат дати'); consultation_date = `${m[3]}-${m[2]}-${m[1]}`; }\nconst parsed = new Date(`${consultation_date}T00:00:00Z`);\nif (Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0,10) !== consultation_date) throw new Error('Неіснуюча дата');\nconst sourceTimestamp = String($json['Отметка времени'] ?? $json['Позначка часу'] ?? $json['Відмітка часу'] ?? $json.Timestamp ?? '').trim();\nif (!sourceTimestamp) throw new Error('Тригер не повернув позначку часу');\nconst source_row_id = `19yHm6hi7G2b8s3y8pFVSoCn8m3HiWJDlFr_CdXMnoUg:567687119:${encodeURIComponent(sourceTimestamp)}:${encodeURIComponent(phone)}:${encodeURIComponent(full_name)}`;\nreturn [{ json: { full_name, phone, request_purpose, property_type, property_location, consultation_date, additional_comments: String($json['Додаткові коментарі'] ?? '').trim() || null, source_row_id } }];"
+        "httpMethod": "POST",
+        "path": "rentkom-forms-test",
+        "responseMode": "onReceived",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        380
+      ],
+      "id": "u-node-forms-test-ingress",
+      "name": "Test Forms Ingress",
+      "webhookId": "rentkom-forms-test",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomTestWebhookSecret",
+          "name": "Rentkom Test Webhook Secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst allowedPurpose = new Set(['Хочу купити','Хочу орендувати','Хочу продати','Хочу здати в оренду']);\nconst allowedType = new Set(['Квартира','Будинок','Комерційне приміщення','Земля']);\n\nconst results = [];\nfor (const item of items) {\n  const data = item.json.body ?? item.json;\n  const required = (name, alt) => {\n    const v = String(data[name] ?? (alt ? data[alt] : '') ?? '').trim();\n    if (!v) throw new Error(`Порожнє обов'язкове поле: ${name}`);\n    return v;\n  };\n  try {\n    const full_name = required('ПІБ', 'full_name');\n    const phone = required('Контактний телефон', 'phone');\n    if (!/^\\+?[0-9 ()-]{10,20}$/.test(phone)) continue;\n    const request_purpose = required('Ціль запиту', 'request_purpose');\n    const property_type = required('Тип нерухомості', 'property_type');\n    if (!allowedPurpose.has(request_purpose)) continue;\n    if (!allowedType.has(property_type)) continue;\n    const property_location = required(\"Місцезнаходження об'єкта\", 'property_location');\n    const rawDate = required('Бажана дата консультації', 'consultation_date');\n    let consultation_date;\n    let m = rawDate.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);\n    if (m) consultation_date = rawDate;\n    else {\n      m = rawDate.match(/^(\\d{2})[./](\\d{2})[./](\\d{4})$/);\n      if (!m) continue;\n      consultation_date = `${m[3]}-${m[2]}-${m[1]}`;\n    }\n    const parsed = new Date(`${consultation_date}T00:00:00Z`);\n    if (Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0,10) !== consultation_date) continue;\n    const sourceTimestamp = String(data['Отметка времени'] ?? data['Позначка часу'] ?? data['Відмітка часу'] ?? data.Timestamp ?? data.timestamp ?? new Date().toISOString()).trim();\n    const source_row_id = String(data.source_row_id ?? `19yHm6hi7G2b8s3y8pFVSoCn8m3HiWJDlFr_CdXMnoUg:567687119:${encodeURIComponent(sourceTimestamp)}:${encodeURIComponent(phone)}:${encodeURIComponent(full_name)}`);\n    const additional_comments = String(data['Додаткові коментарі'] ?? data.additional_comments ?? '').trim() || null;\n    results.push({ json: { full_name, phone, request_purpose, property_type, property_location, consultation_date, additional_comments, source_row_id } });\n  } catch (e) {\n    // skip invalid item\n  }\n}\nreturn results;"
       },
       "id": "8a5a71d3-d30b-4179-9132-0c96a70cd44c",
       "name": "Validate and Normalize",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-320, 240]
+      "position": [
+        -300,
+        280
+      ]
     },
     {
       "parameters": {
@@ -38,18 +93,50 @@
       "name": "Insert Request Idempotently",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
-      "position": [-60, 240]
+      "position": [
+        -60,
+        280
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "0hyM64j1c9hxAiq7",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
-        "conditions": {"options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2}, "conditions": [{"id": "e4615875-d62e-4396-a20e-fb4f6f5631bb", "leftValue": "={{ String($json.id ?? '') }}", "rightValue": "", "operator": {"type": "string", "operation": "notEmpty", "singleValue": true}}], "combinator": "and"},
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e4615875-d62e-4396-a20e-fb4f6f5631bb",
+              "leftValue": "={{ String($json.id ?? '') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
         "options": {}
       },
       "id": "d79359f5-2271-4db0-a6de-65a019638188",
       "name": "Inserted New Row",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [200, 240]
+      "position": [
+        180,
+        280
+      ]
     },
     {
       "parameters": {
@@ -57,26 +144,88 @@
         "subject": "=Нова заявка на консультацію - {{ $json.full_name }}",
         "emailType": "text",
         "message": "=Отримано нову заявку агентства нерухомості.\n\nПІБ: {{ $json.full_name }}\nТелефон: {{ $json.phone }}\nЦіль запиту: {{ $json.request_purpose }}\nТип нерухомості: {{ $json.property_type }}\nМісцезнаходження: {{ $json.property_location }}\nДата консультації: {{ DateTime.fromISO($json.consultation_date).setZone('Europe/Kyiv').toFormat('dd.MM.yyyy') }}\nКоментар: {{ $json.additional_comments || 'Немає' }}\nID запису: {{ $json.id }}\nДжерело: {{ $json.source_row_id }}",
-        "options": {"appendAttribution": false}
+        "options": {
+          "appendAttribution": false
+        }
       },
       "id": "95b4d146-ae24-4f63-9262-d09929bc4d3d",
       "name": "Send Gmail Notification",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "disabled": true,
+      "continueOnFail": true,
       "notes": "DECOUPLED: Direct Gmail delivery disabled to prevent dual-write duplicate emails. Authoritative notification delivery is handled by Transactional Outbox Worker.",
-      "position": [460, 160]
+      "position": [
+        420,
+        280
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GsNbRh9jsuecZBVq",
+          "name": "Gmail | OI43 Lab4"
+        }
+      }
     }
   ],
   "connections": {
-    "Google Sheets Trigger": {"main": [[{"node": "Validate and Normalize", "type": "main", "index": 0}]]},
-    "Validate and Normalize": {"main": [[{"node": "Insert Request Idempotently", "type": "main", "index": 0}]]},
-    "Insert Request Idempotently": {"main": [[{"node": "Inserted New Row", "type": "main", "index": 0}]]},
-    "Inserted New Row": {"main": [[{"node": "Send Gmail Notification", "type": "main", "index": 0}], []]}
+    "Google Sheets Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate and Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Forms Ingress": {
+      "main": [
+        [
+          {
+            "node": "Validate and Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and Normalize": {
+      "main": [
+        [
+          {
+            "node": "Insert Request Idempotently",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Request Idempotently": {
+      "main": [
+        [
+          {
+            "node": "Inserted New Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inserted New Row": {
+      "main": [
+        [
+          {
+            "node": "Send Gmail Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
   },
-  "pinData": {},
-  "settings": {"executionOrder": "v1"},
-  "active": false,
-  "versionId": "2557350f-a394-47e8-b172-2c7fb87dcff9",
-  "meta": {"templateCredsSetupCompleted": false}
+  "settings": {
+    "executionOrder": "v1"
+  }
 }

@@ -25,3 +25,9 @@ datasources:
       httpHeaderName1: "X-Admin-Token"
     secureJsonData:
       httpHeaderValue1: "${ADMIN_API_KEY}"
+
+  - name: Rentkom LR3 Google Sheets Analytics
+    uid: rentkom-lr3-sheets
+    type: marcusolsson-json-datasource
+    access: proxy
+    url: "http://n8n:5678/webhook/lab5/customer-satisfaction"

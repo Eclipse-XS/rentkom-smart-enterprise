@@ -1,7 +1,7 @@
 import json
 import pytest
 
-def simulate_router(message_text: str, rules_config: dict) -> str:
+def simulate_switch(message_text: str, rules_config: dict) -> str:
     rules = rules_config.get("rules", {}).get("values", [])
     t_clean = message_text.strip().lower()
 
@@ -17,31 +17,53 @@ def simulate_router(message_text: str, rules_config: dict) -> str:
 
     return rules_config.get("options", {}).get("renameFallbackOutput", "extra")
 
-def test_unified_telegram_router_routes():
+
+def test_unified_telegram_router_node_structure():
     with open("SMART_ENTERPRISE/automation/n8n/unified_telegram_router.json", "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    router_node = next(n for n in data["nodes"] if n["id"] == "u-node-switch")
-    rules_config = router_node["parameters"]
+    node_ids = {n["id"] for n in data["nodes"]}
+    # Verify presence of mode switch and separate routers
+    assert "u-node-mode-switch" in node_ids
+    assert "u-node-lr2-switch" in node_ids
+    assert "u-node-lr6-switch" in node_ids
+    assert "u-node-lr2-fallback" in node_ids
+
+
+def test_lr2_router_branches():
+    with open("SMART_ENTERPRISE/automation/n8n/unified_telegram_router.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    lr2_node = next(n for n in data["nodes"] if n["id"] == "u-node-lr2-switch")
+    rules_config = lr2_node["parameters"]
 
     # 1. Start command
-    res1 = simulate_router("/start", rules_config)
-    assert res1 == "Start Menu"
+    assert simulate_switch("/start", rules_config) == "Start Menu"
 
     # 2. Buying menu
-    res2 = simulate_router("🏢 Процес купівлі/продажу", rules_config)
-    assert res2 == "Купівля/Продаж"
+    assert simulate_switch("🏢 Процес купівлі/продажу", rules_config) == "Купівля/Продаж"
+    assert simulate_switch("купівля квартири", rules_config) == "Купівля/Продаж"
 
     # 3. Landlord menu
-    res3 = simulate_router("🔑 Послуги для орендодавців", rules_config)
-    assert res3 == "Орендодавцям"
+    assert simulate_switch("🔑 Послуги для орендодавців", rules_config) == "Орендодавцям"
+    assert simulate_switch("оренда", rules_config) == "Орендодавцям"
 
-    # 4. Natural language query (routes to AI RAG)
-    res4 = simulate_router("Які документи перевіряються перед покупкою?", rules_config)
-    assert res4 == "AI RAG запит"
+    # 4. In LR2 mode, an unrecognized query routes to LR2 Fallback, NOT AI RAG!
+    assert simulate_switch("Які документи перевіряються перед покупкою?", rules_config) == "LR2 Fallback"
+    assert simulate_switch("Привіт, яка вартість ваших послуг?", rules_config) == "LR2 Fallback"
 
-    # 5. Fallback verification
-    fallback_node = next(n for n in data["nodes"] if n["id"] == "u-node-send-ai-response")
-    fallback_expr = fallback_node["parameters"].get("text") or fallback_node["parameters"].get("jsonBody", "")
-    assert "Вибачте, сервіс консультацій тимчасово недоступний" in fallback_expr
-    assert "+38 (032) 240-00-00" in fallback_expr
+
+def test_lr6_router_branches():
+    with open("SMART_ENTERPRISE/automation/n8n/unified_telegram_router.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    lr6_node = next(n for n in data["nodes"] if n["id"] == "u-node-lr6-switch")
+    rules_config = lr6_node["parameters"]
+
+    # 1. Start command
+    assert simulate_switch("/start", rules_config) == "LR6 Start Greeting"
+
+    # 2. In LR6 mode, all natural language questions route to AI RAG!
+    assert simulate_switch("Які документи перевіряються перед купівлею?", rules_config) == "AI RAG Запит"
+    assert simulate_switch("Розкажіть про оренду", rules_config) == "AI RAG Запит"
+    assert simulate_switch("Привіт, як оформити завдаток?", rules_config) == "AI RAG Запит"
