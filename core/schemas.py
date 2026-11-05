@@ -171,6 +171,19 @@ class TelegramInboxGuardResponse(BaseModel):
     text: str
     is_test: bool = False
     cached_response: Optional[Dict[str, Any]] = None
+    mode: str = "LR2"
+
+class TelegramModeRequest(BaseModel):
+    mode: str
+
+class TelegramModeResponse(BaseModel):
+    mode: str
+    status: str = "SUCCESS"
+    updated_at: Optional[str] = None
+    changed: bool = True
+    notification_status: str = "NOT_REQUESTED"
+    notification_error: Optional[str] = None
+    notification_message_id: Optional[int] = None
 
 class TelegramRealSendRequest(BaseModel):
     chat_id: int

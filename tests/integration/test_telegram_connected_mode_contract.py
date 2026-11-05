@@ -334,7 +334,7 @@ def test_guard_response_contains_zero_secrets():
         assert resp.status_code == 200
         data = resp.json()
         # Strictly verify exact fields
-        allowed_keys = {"action", "status", "update_id", "chat_id", "text", "is_test", "cached_response"}
+        allowed_keys = {"action", "status", "update_id", "chat_id", "text", "is_test", "cached_response", "mode"}
         assert set(data.keys()) == allowed_keys, f"Guard response leaked unexpected fields: {set(data.keys()) - allowed_keys}"
         assert "test_token" not in data
         assert "internal_token" not in data

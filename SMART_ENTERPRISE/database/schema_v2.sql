@@ -192,6 +192,17 @@ CREATE INDEX IF NOT EXISTS idx_inbound_leads_status ON public.inbound_lead_submi
 CREATE INDEX IF NOT EXISTS idx_inbound_leads_norm_phone ON public.inbound_lead_submissions (normalized_phone);
 CREATE INDEX IF NOT EXISTS idx_inbound_leads_channel_event ON public.inbound_lead_submissions (intake_channel, external_event_id);
 
+-- 8c. System Configuration & Runtime Mode Management
+CREATE TABLE IF NOT EXISTS public.system_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO public.system_config (key, value)
+VALUES ('telegram_bot_mode', 'LR2')
+ON CONFLICT (key) DO NOTHING;
+
 -- 9. Data Migration & Compatibility Bridge
 -- If legacy physical table real_estate_requests exists, migrate rows into customers and service_requests,
 -- then rename the legacy table so the backward-compatibility VIEW can be created without relation collision.

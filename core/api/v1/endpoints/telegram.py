@@ -23,12 +23,147 @@ from core.schemas import (
     TelegramInboxCompleteRequest,
     TelegramMockDispatchRequest,
     TelegramMockDispatchResponse,
-    TelegramRealSendRequest
+    TelegramRealSendRequest,
+    TelegramModeRequest,
+    TelegramModeResponse
 )
+import os
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def get_telegram_bot_mode(db: Optional[Session] = None) -> str:
+    """Retrieves the authoritative active Telegram mode (LR2 or LR6) from PostgreSQL."""
+    if db is not None:
+        try:
+            from core.models import SystemConfig
+            row = db.query(SystemConfig).filter(SystemConfig.key == "telegram_bot_mode").first()
+            if row and row.value in ("LR2", "LR6"):
+                return row.value
+        except Exception as e:
+            logger.warning(f"Failed to query system_config for telegram_bot_mode: {e}")
+    return os.getenv("DEFAULT_TELEGRAM_MODE", "LR2")
+
+
+def set_telegram_bot_mode(mode: str, db: Session) -> tuple[str, bool]:
+    """Persists the selected mode (LR2 or LR6) into PostgreSQL."""
+    from core.models import SystemConfig
+    mode_upper = mode.strip().upper()
+    if mode_upper not in ("LR2", "LR6"):
+        raise HTTPException(status_code=400, detail=f"Invalid mode '{mode}'. Must be 'LR2' or 'LR6'.")
+    row = db.query(SystemConfig).filter(SystemConfig.key == "telegram_bot_mode").first()
+    if row and row.value == mode_upper:
+        return mode_upper, False
+    if not row:
+        row = SystemConfig(key="telegram_bot_mode", value=mode_upper)
+        db.add(row)
+    else:
+        row.value = mode_upper
+    db.commit()
+    logger.info(f"[MODE] Telegram bot mode successfully updated to {mode_upper}")
+    return mode_upper, True
+
+
+LR2_REPLY_KEYBOARD = {
+    "keyboard": [[
+        {"text": "🏢 Процес купівлі/продажу"},
+        {"text": "🔑 Послуги для орендодавців"},
+    ]],
+    "resize_keyboard": True,
+}
+LR6_REPLY_KEYBOARD_REMOVE = {"remove_keyboard": True}
+MODE_NOTIFICATION_TEXT = {
+    "LR2": (
+        "🔄 Режим переключено на ЛР2: Сценарний чат-бот агентства «Рентком».\n\n"
+        "Сценарні кнопки активовано. Виберіть потрібний розділ меню нижче:"
+    ),
+    "LR6": (
+        "🔄 Режим переключено на ЛР6: Інтелектуальний RAG AI-консультант агентства «Рентком» "
+        "(база знань Qdrant + Ollama qwen3:4b-instruct).\n\n"
+        "Сценарну клавіатуру вимкнено. Ви можете ставити будь-які запитання щодо купівлі, "
+        "оренди, перевірки документів або правил агентства."
+    ),
+}
+
+
+def get_mode_notification(mode: str) -> tuple[str, Dict[str, Any]]:
+    return (
+        MODE_NOTIFICATION_TEXT[mode],
+        LR2_REPLY_KEYBOARD if mode == "LR2" else LR6_REPLY_KEYBOARD_REMOVE,
+    )
+
+
+async def send_mode_notification(chat_id: int, mode: str) -> Optional[int]:
+    """Deliver the post-commit mode confirmation to exactly one configured chat."""
+    if not settings.TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
+    text, reply_markup = get_mode_notification(mode)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "reply_markup": reply_markup},
+        )
+    if response.status_code != 200:
+        raise RuntimeError(f"Telegram API rejected notification (HTTP {response.status_code})")
+    body = response.json()
+    if not body.get("ok"):
+        raise RuntimeError("Telegram API did not accept the notification")
+    return (body.get("result") or {}).get("message_id")
+
+
+@router.get("/mode", response_model=TelegramModeResponse)
+def get_mode_endpoint(db: Session = Depends(get_db)):
+    """Retrieves the active Telegram operating mode (LR2 or LR6)."""
+    mode = get_telegram_bot_mode(db)
+    return TelegramModeResponse(mode=mode, status="SUCCESS")
+
+
+@router.post("/mode", response_model=TelegramModeResponse)
+async def set_mode_endpoint(
+    req: TelegramModeRequest,
+    x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    db: Session = Depends(get_db)
+):
+    """Explicitly switches the active Telegram bot operating mode between LR2 and LR6."""
+    internal_key = get_effective_internal_key()
+    admin_key = getattr(settings, "ADMIN_API_KEY", None)
+    bearer = _extract_bearer(authorization)
+    token = x_internal_token or x_admin_key or bearer
+    is_valid_internal = bool(internal_key and token and constant_time_equals(token, internal_key))
+    is_valid_admin = bool(admin_key and token and constant_time_equals(token, admin_key))
+    if not (is_valid_internal or is_valid_admin):
+        raise HTTPException(status_code=403, detail="Forbidden: requires valid administrator or internal token")
+    updated, changed = set_telegram_bot_mode(req.mode, db)
+    if not changed:
+        return TelegramModeResponse(
+            mode=updated, status="UNCHANGED", changed=False,
+            notification_status="SKIPPED_ALREADY_ACTIVE",
+        )
+
+    admin_chat_id = getattr(settings, "TELEGRAM_ADMIN_CHAT_ID", None)
+    if not admin_chat_id:
+        return TelegramModeResponse(
+            mode=updated, status="PARTIAL_SUCCESS", updated_at=str(time.time()),
+            notification_status="FAILED",
+            notification_error="TELEGRAM_ADMIN_CHAT_ID is not configured",
+        )
+    try:
+        message_id = await send_mode_notification(int(admin_chat_id), updated)
+    except Exception as exc:
+        logger.error("[MODE] Persisted %s but notification failed: %s", updated, exc)
+        return TelegramModeResponse(
+            mode=updated, status="PARTIAL_SUCCESS", updated_at=str(time.time()),
+            notification_status="FAILED", notification_error=str(exc),
+        )
+    return TelegramModeResponse(
+        mode=updated, status="SUCCESS", updated_at=str(time.time()),
+        notification_status="DELIVERED", notification_message_id=message_id,
+    )
+
 
 
 class TelegramUpdateMock(BaseModel):
@@ -92,53 +227,98 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
     text_content = (message.get("text") or "").strip()
 
     try:
-        # 1. Start Menu Route
-        if text_content.lower() == "/start":
-            res = TelegramResponseMock(
-                route="Start Menu",
-                response_text=START_MENU_TEXT,
-                reply_markup={
-                    "keyboard": [
-                        [{"text": "🏢 Процес купівлі/продажу"}, {"text": "🔑 Послуги для орендодавців"}],
-                        [{"text": "📋 Залишити заявку"}, {"text": "📞 Контакти"}]
-                    ],
-                    "resize_keyboard": True
-                }
-            )
+        active_mode = get_telegram_bot_mode(db)
 
-        # 2. Buying Process Route
-        elif "процес купівлі" in text_content.lower() or "купівл" in text_content.lower():
-            res = TelegramResponseMock(
-                route="Купівля/Продаж",
-                response_text=BUY_PROCESS_TEXT,
-                reply_markup={"inline_keyboard": [[{"text": "Замовити консультацію", "callback_data": "consult_buy"}]]}
-            )
+        # Admin command interceptor: /mode lr2 | /mode lr6 | /mode status
+        admin_chat_id = getattr(settings, "TELEGRAM_ADMIN_CHAT_ID", None)
+        chat_id_val = message.get("chat", {}).get("id") or 0
+        if admin_chat_id and str(chat_id_val) == str(admin_chat_id) and text_content.lower().startswith("/mode"):
+            parts = text_content.strip().split()
+            if len(parts) > 1 and parts[1].upper() in ("LR2", "LR6") and db is not None:
+                new_m, changed = set_telegram_bot_mode(parts[1], db)
+                if changed:
+                    notification_text, notification_markup = get_mode_notification(new_m)
+                    res = TelegramResponseMock(
+                        route="Admin Command",
+                        response_text=notification_text,
+                        reply_markup=notification_markup,
+                    )
+                else:
+                    res = TelegramResponseMock(
+                        route="Admin Command",
+                        response_text=f"Режим {new_m} вже активний. Зміни не виконано.",
+                    )
+            else:
+                res = TelegramResponseMock(
+                    route="Admin Command",
+                    response_text=f"Поточний активний режим бота: {active_mode}\nДоступні команди: /mode lr2, /mode lr6, /mode status"
+                )
+        elif active_mode == "LR2":
+            # PURE LR2 EXECUTION MODE
+            if text_content.lower() == "/start":
+                res = TelegramResponseMock(
+                    route="Start Menu",
+                    response_text=START_MENU_TEXT,
+                    reply_markup=LR2_REPLY_KEYBOARD
+                )
+            elif any(k in text_content.lower() for k in ["процес купівлі", "купівл"]):
+                res = TelegramResponseMock(
+                    route="Купівля/Продаж",
+                    response_text=BUY_PROCESS_TEXT,
+                    reply_markup={"inline_keyboard": [[{"text": "Замовити консультацію", "callback_data": "consult_buy"}]]}
+                )
+            elif any(k in text_content.lower() for k in ["орендодавц", "послуги для орендодавців"]):
+                res = TelegramResponseMock(
+                    route="Орендодавцям",
+                    response_text=RENT_SERVICES_TEXT,
+                    reply_markup={"inline_keyboard": [[{"text": "Здати об'єкт", "callback_data": "rent_out"}]]}
+                )
+            else:
+                # LR2 RULE-BASED FALLBACK: Strictly deterministic, NEVER invokes RAG!
+                res = TelegramResponseMock(
+                    route="LR2 Fallback",
+                    response_text=(
+                        "Не вдалося розпізнати запит.\n\n"
+                        "Я можу надати інформацію про:\n"
+                        "• процес купівлі/продажу;\n"
+                        "• послуги для орендодавців.\n\n"
+                        "Будь ласка, скористайтеся кнопками меню нижче."
+                    ),
+                    reply_markup=LR2_REPLY_KEYBOARD
+                )
 
-        # 3. Landlord Services Route
-        elif "орендодавц" in text_content.lower() or "оренд" in text_content.lower():
-            res = TelegramResponseMock(
-                route="Орендодавцям",
-                response_text=RENT_SERVICES_TEXT,
-                reply_markup={"inline_keyboard": [[{"text": "Здати об'єкт", "callback_data": "rent_out"}]]}
-            )
-
-        # 4. AI RAG Query Route (LR6 Integration)
         else:
-            try:
-                rag_out = await query_rag(text_content)
+            # PURE LR6 EXECUTION MODE (RAG AI Agent)
+            if text_content.lower() == "/start":
                 res = TelegramResponseMock(
-                    route="AI RAG Agent",
-                    response_text=rag_out.answer,
-                    sources=rag_out.sources,
-                    confidence_score=rag_out.confidence_score
+                    route="LR6 AI Greeting",
+                    response_text=(
+                        "Вітаю! Я інформаційний помічник агентства нерухомості «Рентком» (м. Львів).\n\n"
+                        "Я можу відповісти за матеріалами корпоративної бази знань про:\n"
+                        "• купівлю житла та 6-етапну перевірку документів;\n"
+                        "• порядок підписання договорів та нотаріальне посвідчення;\n"
+                        "• умови типового договору оренди;\n"
+                        "• послуги агентства та правила конфіденційності.\n\n"
+                        "Поставте будь-яке запитання з нерухомості у вільній формі."
+                    ),
+                    reply_markup=LR6_REPLY_KEYBOARD_REMOVE,
                 )
-            except Exception as rag_err:
-                logger.warning(f"RAG Core unreachable or timed out: {rag_err}")
-                res = TelegramResponseMock(
-                    route="Fallback Service",
-                    response_text=FALLBACK_TEXT,
-                    confidence_score=0.0
-                )
+            else:
+                try:
+                    rag_out = await query_rag(text_content)
+                    res = TelegramResponseMock(
+                        route="AI RAG Agent",
+                        response_text=rag_out.answer,
+                        sources=rag_out.sources,
+                        confidence_score=rag_out.confidence_score
+                    )
+                except Exception as rag_err:
+                    logger.warning(f"RAG Core unreachable or timed out: {rag_err}")
+                    res = TelegramResponseMock(
+                        route="Fallback Service",
+                        response_text=FALLBACK_TEXT,
+                        confidence_score=0.0
+                    )
 
         # Persist completion state in DB Inbox & memory
         await telegram_idempotency.finish_processing(
@@ -308,7 +488,8 @@ async def acquire_telegram_inbox_guard(
             cached_response=cached.model_dump() if cached else None
         )
 
-    logger.info(f"[TELEGRAM-GUARD] Update {update_id} acquired lease. Action: EXECUTE")
+    current_mode = get_telegram_bot_mode(db)
+    logger.info(f"[TELEGRAM-GUARD] Update {update_id} acquired lease. Action: EXECUTE. Active Mode: {current_mode}")
     return TelegramInboxGuardResponse(
         action="EXECUTE",
         status="NEW",
@@ -316,7 +497,8 @@ async def acquire_telegram_inbox_guard(
         chat_id=clean_chat_id,
         text=clean_text,
         is_test=guard_req.is_test,
-        cached_response=None
+        cached_response=None,
+        mode=current_mode
     )
 
 
@@ -435,7 +617,8 @@ async def dispatch_telegram_mock(
                 "type": "private",
                 "first_name": "RentkomDemoUser"
             },
-            "text": dispatch_req.text
+            "text": dispatch_req.text,
+            "reply_markup": dispatch_req.reply_markup
         },
         delivery_mode="INTEGRATION_TESTED"
     )

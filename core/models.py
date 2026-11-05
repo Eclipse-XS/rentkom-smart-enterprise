@@ -160,3 +160,12 @@ class InboundLeadSubmission(Base):
     __table_args__ = (
         UniqueConstraint("intake_channel", "external_event_id", name="uq_inbound_leads_channel_event"),
     )
+
+
+class SystemConfig(Base):
+    __tablename__ = "system_config"
+
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, server_default=func.now(), onupdate=utc_now, nullable=False)
+

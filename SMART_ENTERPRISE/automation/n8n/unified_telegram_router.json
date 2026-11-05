@@ -1,6 +1,7 @@
 {
   "id": "RentkomTelegramUnified01",
   "name": "Rentkom Unified Telegram Router (LR2 + LR6)",
+  "active": true,
   "nodes": [
     {
       "parameters": {
@@ -78,8 +79,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        360,
-        220
+        340,
+        240
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -115,10 +116,10 @@
       "id": "u-node-is-new-update",
       "name": "Is New Update?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
+      "typeVersion": 2,
       "position": [
-        600,
-        220
+        560,
+        240
       ]
     },
     {
@@ -128,9 +129,166 @@
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        840,
-        80
+        780,
+        100
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-mode-lr6",
+              "leftValue": "={{ $json.mode }}",
+              "rightValue": "LR6",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "u-node-mode-switch",
+      "name": "Mode Switch (LR2 vs LR6)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        780,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c-lr6-start",
+                    "leftValue": "={{ $json.text }}",
+                    "rightValue": "/start",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "LR6 Start Greeting"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "AI RAG Запит",
+          "allMatchingOutputs": false
+        }
+      },
+      "id": "u-node-lr6-switch",
+      "name": "LR6 Message Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1040,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://business-api:8000' + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Вітаю! Я інформаційний помічник агентства нерухомості «Рентком» (м. Львів).\\n\\nЯ можу відповісти за матеріалами корпоративної бази знань про:\\n• купівлю житла та 6-етапну перевірку документів;\\n• порядок підписання договорів та нотаріальне посвідчення;\\n• умови типового договору оренди;\\n• послуги агентства та правила конфіденційності.\\n\\nПоставте будь-яке запитання з нерухомості у вільній формі.' } }}",
+        "options": {
+          "timeout": 15000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "u-node-lr6-greeting",
+      "name": "LR6 AI Greeting Handler",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        140
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomInternalAuth",
+          "name": "Rentkom Internal Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://business-api:8000/api/v1/rag/ask",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { question: $('Acquire Telegram Inbox Guard').item.json.text } }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "u-node-rag-core",
+      "name": "Query RAG Core API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://business-api:8000' + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: $json.answer ? $json.answer + ($json.sources && $json.sources.length ? '\\n\\n📚 [Джерела: ' + $json.sources.join(', ') + ']' : '') : 'Вибачте, сервіс консультацій тимчасово недоступний. Будь ласка, зверніться за номером +38 (032) 240-00-00.' } }}",
+        "options": {
+          "timeout": 15000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "u-node-send-ai-response",
+      "name": "Send AI / Fallback Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        260
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomInternalAuth",
+          "name": "Rentkom Internal Auth"
+        }
+      }
     },
     {
       "parameters": {
@@ -212,17 +370,17 @@
         },
         "options": {
           "fallbackOutput": "extra",
-          "renameFallbackOutput": "AI RAG запит",
+          "renameFallbackOutput": "LR2 Fallback",
           "allMatchingOutputs": false
         }
       },
-      "id": "u-node-switch",
-      "name": "Intelligent Message Router",
+      "id": "u-node-lr2-switch",
+      "name": "LR2 Message Router",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
       "position": [
-        840,
-        300
+        1040,
+        520
       ]
     },
     {
@@ -232,7 +390,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Вітаємо в інформаційній системі агентства нерухомості «Рентком» (м. Львів)!\\n\\nВи можете скористатися швидким меню або поставити будь-яке запитання з нерухомості нашому ШІ-консультанту.' } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Вітаємо в інформаційній системі агентства нерухомості «Рентком» (м. Львів)!\\n\\nОберіть потрібний розділ із меню нижче:', reply_markup: { keyboard: [[{text: '🏢 Процес купівлі/продажу'}, {text: '🔑 Послуги для орендодавців'}]], resize_keyboard: true } } }}",
         "options": {
           "timeout": 15000
         },
@@ -244,8 +402,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1120,
-        140
+        1320,
+        400
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -261,7 +419,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: '🏢 *Процес купівлі нерухомості у «Рентком»:*\\n\\n1. Формування запиту та бюджету.\\n2. Підбір актуальних пропозицій.\\n3. Організація оглядів об’єктів.\\n4. Перевірка правовстановлюючих документів та ланцюга набуття.\\n5. Узгодження завдатку, нотаріальне посвідчення угоди.\\n6. Акт приймання-передачі та ключі.' } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: '🏢 *Процес купівлі нерухомості у «Рентком»:*\\n\\n1. Формування запиту та бюджету.\\n2. Підбір актуальних пропозицій.\\n3. Організація оглядів об’єктів.\\n4. Перевірка правовстановлюючих документів та ланцюга набуття.\\n5. Узгодження завдатку, нотаріальне посвідчення угоди.\\n6. Акт приймання-передачі та ключі.', reply_markup: { inline_keyboard: [[{text: 'Замовити консультацію', callback_data: 'consult_buy'}]] } } }}",
         "options": {
           "timeout": 15000
         },
@@ -273,8 +431,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1120,
-        280
+        1320,
+        500
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -290,7 +448,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: '🔑 *Послуги для орендодавців:*\\n\\n• Професійна фотозйомка та презентація об’єкта;\\n• Таргетоване просування та відбір орендарів;\\n• Юридичний супровід договору оренди та опис майна;\\n• Подальша підтримка та управління орендою.' } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: '🔑 *Послуги для орендодавців:*\\n\\n• Професійна фотозйомка та презентація об’єкта;\\n• Таргетоване просування та відбір орендарів;\\n• Юридичний супровід договору оренди та опис майна;\\n• Подальша підтримка та управління орендою.', reply_markup: { inline_keyboard: [[{text: 'Здати об\\'єкт', callback_data: 'rent_out'}]] } } }}",
         "options": {
           "timeout": 15000
         },
@@ -302,8 +460,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1120,
-        420
+        1320,
+        600
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -315,46 +473,24 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://business-api:8000/api/v1/rag/ask",
-        "sendBody": true,
-        "contentType": "json",
-        "specifyBody": "json",
-        "jsonBody": "={{ { question: $('Acquire Telegram Inbox Guard').item.json.text } }}",
-        "options": {
-          "timeout": 90000
-        }
-      },
-      "onError": "continueRegularOutput",
-      "id": "u-node-rag-core",
-      "name": "Query RAG Core API",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1120,
-        580
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
         "url": "={{ 'http://business-api:8000' + ($('Acquire Telegram Inbox Guard').item.json.is_test ? '/api/v1/telegram/mock-dispatcher' : '/api/v1/telegram/send-message') }}",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: $json.answer ? $json.answer + ($json.sources && $json.sources.length ? '\\n\\n📚 [Джерела: ' + $json.sources.join(', ') + ']' : '') : 'Вибачте, сервіс консультацій тимчасово недоступний. Будь ласка, зверніться за номером +38 (032) 240-00-00.' } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Не вдалося розпізнати запит.\\n\\nЯ можу надати інформацію про:\\n• процес купівлі/продажу;\\n• послуги для орендодавців.\\n\\nБудь ласка, скористайтеся кнопками меню нижче.', reply_markup: { keyboard: [[{text: '🏢 Процес купівлі/продажу'}, {text: '🔑 Послуги для орендодавців'}]], resize_keyboard: true } } }}",
         "options": {
           "timeout": 15000
         },
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth"
       },
-      "id": "u-node-send-ai-response",
-      "name": "Send AI / Fallback Response",
+      "id": "u-node-lr2-fallback",
+      "name": "LR2 Fallback Handler",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1380,
-        580
+        1320,
+        700
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -370,7 +506,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { update_id: $('Acquire Telegram Inbox Guard').item.json.update_id, route: 'Executed', response_text: $json.result ? $json.result.text : 'OK' } }}",
+        "jsonBody": "={{ { update_id: $('Acquire Telegram Inbox Guard').item.json.update_id, route: 'Executed', response_text: $json.result ? $json.result.text : ($json.answer ? $json.answer : 'OK') } }}",
         "options": {
           "timeout": 15000
         },
@@ -382,8 +518,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1640,
-        360
+        1800,
+        420
       ],
       "credentials": {
         "httpHeaderAuth": {
@@ -431,7 +567,7 @@
       "main": [
         [
           {
-            "node": "Intelligent Message Router",
+            "node": "Mode Switch (LR2 vs LR6)",
             "type": "main",
             "index": 0
           }
@@ -445,7 +581,76 @@
         ]
       ]
     },
-    "Intelligent Message Router": {
+    "Mode Switch (LR2 vs LR6)": {
+      "main": [
+        [
+          {
+            "node": "LR6 Message Router",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "LR2 Message Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LR6 Message Router": {
+      "main": [
+        [
+          {
+            "node": "LR6 AI Greeting Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Query RAG Core API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LR6 AI Greeting Handler": {
+      "main": [
+        [
+          {
+            "node": "Finalize Telegram Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query RAG Core API": {
+      "main": [
+        [
+          {
+            "node": "Send AI / Fallback Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send AI / Fallback Response": {
+      "main": [
+        [
+          {
+            "node": "Finalize Telegram Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LR2 Message Router": {
       "main": [
         [
           {
@@ -470,7 +675,7 @@
         ],
         [
           {
-            "node": "Query RAG Core API",
+            "node": "LR2 Fallback Handler",
             "type": "main",
             "index": 0
           }
@@ -510,18 +715,7 @@
         ]
       ]
     },
-    "Query RAG Core API": {
-      "main": [
-        [
-          {
-            "node": "Send AI / Fallback Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send AI / Fallback Response": {
+    "LR2 Fallback Handler": {
       "main": [
         [
           {
@@ -533,10 +727,7 @@
       ]
     }
   },
-  "active": true,
   "settings": {
-    "executionOrder": "v1",
-    "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner"
+    "executionOrder": "v1"
   }
 }
