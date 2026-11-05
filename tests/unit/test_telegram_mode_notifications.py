@@ -112,3 +112,114 @@ def test_delivery_failure_reports_partial_success_and_keeps_mode(client):
     assert data["notification_status"] == "FAILED"
     assert "provider unavailable" in data["notification_error"]
     assert client.get("/api/v1/telegram/mode").json()["mode"] == "LR6"
+
+
+def _mode_control_payload(action, callback_data=None, user_id=None):
+    from core.config import settings
+    admin_id = int(settings.TELEGRAM_ADMIN_USER_ID)
+    return {
+        "action": action,
+        "chat_id": int(settings.TELEGRAM_ADMIN_CHAT_ID),
+        "telegram_user_id": user_id if user_id is not None else admin_id,
+        "callback_query_id": "callback-1" if action == "SELECT_MODE" else None,
+        "callback_data": callback_data,
+        "is_test": False,
+    }
+
+
+def test_single_mode_command_sends_inline_selector(client):
+    async def telegram_result(method, payload):
+        assert method == "sendMessage"
+        assert payload["reply_markup"]["inline_keyboard"][0][0] == {
+            "text": "ЛР2 — Сценарний бот", "callback_data": "mode:LR2"
+        }
+        assert payload["reply_markup"]["inline_keyboard"][0][1] == {
+            "text": "ЛР6 — AI-асистент", "callback_data": "mode:LR6"
+        }
+        return {"ok": True, "result": {"message_id": 501}}
+
+    with patch("core.api.v1.endpoints.telegram._telegram_api", side_effect=telegram_result):
+        response = client.post(
+            "/api/v1/telegram/mode/telegram-control",
+            json=_mode_control_payload("SHOW_SELECTOR"), headers=_auth_headers(),
+        )
+    assert response.json()["status"] == "SELECTOR_SENT"
+    assert response.json()["notification_message_id"] == 501
+
+
+def test_mode_callback_answers_and_switches_to_lr6(client):
+    calls = []
+
+    async def telegram_result(method, payload):
+        calls.append((method, payload))
+        return {"ok": True, "result": {"message_id": 502}}
+
+    with patch("core.api.v1.endpoints.telegram._telegram_api", side_effect=telegram_result):
+        response = client.post(
+            "/api/v1/telegram/mode/telegram-control",
+            json=_mode_control_payload("SELECT_MODE", "mode:LR6"), headers=_auth_headers(),
+        )
+    data = response.json()
+    assert data["status"] == "SUCCESS"
+    assert data["callback_answered"] is True
+    assert [call[0] for call in calls] == ["answerCallbackQuery", "sendMessage"]
+    assert calls[1][1]["text"] == EXPECTED_LR6_TEXT
+    assert calls[1][1]["reply_markup"] == {"remove_keyboard": True}
+    assert client.get("/api/v1/telegram/mode").json()["mode"] == "LR6"
+
+
+def test_repeated_callback_is_unchanged_without_activation_message(client, db_session):
+    set_telegram_bot_mode("LR6", db_session)
+    calls = []
+
+    async def telegram_result(method, payload):
+        calls.append((method, payload))
+        return {"ok": True, "result": {"message_id": 503}}
+
+    with patch("core.api.v1.endpoints.telegram._telegram_api", side_effect=telegram_result):
+        response = client.post(
+            "/api/v1/telegram/mode/telegram-control",
+            json=_mode_control_payload("SELECT_MODE", "mode:LR6"), headers=_auth_headers(),
+        )
+    assert response.json()["status"] == "UNCHANGED"
+    assert "Зміни не потрібні" in calls[1][1]["text"]
+
+
+def test_mode_callback_rejects_wrong_telegram_user(client):
+    calls = []
+
+    async def telegram_result(method, payload):
+        calls.append((method, payload))
+        return {"ok": True, "result": True}
+
+    with patch("core.api.v1.endpoints.telegram._telegram_api", side_effect=telegram_result):
+        response = client.post(
+            "/api/v1/telegram/mode/telegram-control",
+            json=_mode_control_payload("SELECT_MODE", "mode:LR6", user_id=999999),
+            headers=_auth_headers(),
+        )
+    assert response.json()["status"] == "FORBIDDEN"
+    assert [call[0] for call in calls] == ["answerCallbackQuery"]
+    assert client.get("/api/v1/telegram/mode").json()["mode"] == "LR2"
+
+
+def test_inbox_guard_normalizes_and_deduplicates_mode_callback(client):
+    from core.config import settings
+    update = {
+        "update_id": 981001,
+        "callback_query": {
+            "id": "callback-guard-1",
+            "from": {"id": int(settings.TELEGRAM_ADMIN_USER_ID)},
+            "message": {"chat": {"id": int(settings.TELEGRAM_ADMIN_CHAT_ID)}},
+            "data": "mode:LR6",
+        },
+    }
+    payload = {"update_id": update["update_id"], "body": update, "is_test": True}
+    headers = {"X-Test-Token": settings.TEST_WEBHOOK_SECRET}
+    first = client.post("/api/v1/telegram/inbox/guard", json=payload, headers=headers)
+    second = client.post("/api/v1/telegram/inbox/guard", json=payload, headers=headers)
+    assert first.status_code == 200
+    assert first.json()["mode_action"] == "SELECT_MODE"
+    assert first.json()["callback_query_id"] == "callback-guard-1"
+    assert first.json()["telegram_user_id"] == int(settings.TELEGRAM_ADMIN_USER_ID)
+    assert second.json()["action"] == "DROP_DUPLICATE"

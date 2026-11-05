@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     TEST_WEBHOOK_SECRET: Optional[str] = os.getenv("TEST_WEBHOOK_SECRET", None)
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN", None)
     TELEGRAM_SECRET_TOKEN: Optional[str] = os.getenv("TELEGRAM_SECRET_TOKEN", None)
+    TELEGRAM_ADMIN_CHAT_ID: Optional[str] = os.getenv("TELEGRAM_ADMIN_CHAT_ID", None)
+    TELEGRAM_ADMIN_USER_ID: Optional[str] = os.getenv("TELEGRAM_ADMIN_USER_ID", None)
     ALLOW_TEST_WEBHOOK: bool = os.getenv("ALLOW_TEST_WEBHOOK", "true").lower() in ("true", "1", "yes")
 
     # Agency Contact & Support Settings (Configurable fallbacks)

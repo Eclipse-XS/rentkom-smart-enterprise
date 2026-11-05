@@ -151,37 +151,24 @@ async def test_lr6_mode_isolation_and_rag(db_session):
 
 
 @pytest.mark.anyio
-async def test_admin_mode_switching_command(db_session):
+async def test_legacy_admin_mode_argument_is_deprecated(db_session):
     """
-    Test admin command /mode lr2, /mode lr6, /mode status:
-      - Admin chat can change mode directly
-      - Non-admin chat cannot change mode
+    Legacy arguments no longer switch modes; the user-facing interface is /mode.
     """
     admin_id = getattr(settings, "TELEGRAM_ADMIN_CHAT_ID", "684809016")
     set_telegram_bot_mode("LR2", db_session)
 
-    # 1. Admin switches to LR6
+    # Legacy command is intercepted but does not switch.
     up_admin = TelegramUpdateMock(
         update_id=930001,
-        message={"chat": {"id": int(admin_id)}, "text": "/mode lr6"}
+        message={"chat": {"id": int(admin_id)}, "from": {"id": int(admin_id)}, "text": "/mode lr6"}
     )
     res_admin = await process_telegram_update(up_admin, db=db_session)
-    assert res_admin.route == "Admin Command"
-    assert "ЛР6" in res_admin.response_text
-    assert res_admin.reply_markup == {"remove_keyboard": True}
-    assert get_telegram_bot_mode(db_session) == "LR6"
+    assert res_admin.route == "Deprecated Admin Command"
+    assert "застаріли" in res_admin.response_text
+    assert get_telegram_bot_mode(db_session) == "LR2"
 
-    # 2. Admin checks status
-    up_status = TelegramUpdateMock(
-        update_id=930002,
-        message={"chat": {"id": int(admin_id)}, "text": "/mode status"}
-    )
-    res_status = await process_telegram_update(up_status, db=db_session)
-    assert res_status.route == "Admin Command"
-    assert "LR6" in res_status.response_text
-
-    # 3. Non-admin user tries /mode lr2
-    # In LR6 mode, non-admin text is treated as normal RAG query or fallback
+    # Non-admin user cannot invoke administrator routing.
     up_user = TelegramUpdateMock(
         update_id=930003,
         message={"chat": {"id": 999999}, "text": "/mode lr2"}
@@ -198,8 +185,7 @@ async def test_admin_mode_switching_command(db_session):
         res_user = await process_telegram_update(up_user, db=db_session)
         # Verify non-admin was NOT treated as Admin Command
         assert res_user.route != "Admin Command"
-        # Database mode remains LR6
-        assert get_telegram_bot_mode(db_session) == "LR6"
+        assert get_telegram_bot_mode(db_session) == "LR2"
 
 
 @pytest.mark.anyio
@@ -209,10 +195,10 @@ async def test_repeated_admin_mode_command_does_not_repeat_keyboard_notification
     result = await process_telegram_update(
         TelegramUpdateMock(
             update_id=930004,
-            message={"chat": {"id": admin_id}, "text": "/mode lr2"},
+            message={"chat": {"id": admin_id}, "from": {"id": admin_id}, "text": "/mode lr2"},
         ),
         db=db_session,
     )
-    assert result.route == "Admin Command"
-    assert "вже активний" in result.response_text
+    assert result.route == "Deprecated Admin Command"
+    assert "застаріли" in result.response_text
     assert result.reply_markup is None

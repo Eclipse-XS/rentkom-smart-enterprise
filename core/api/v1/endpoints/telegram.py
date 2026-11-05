@@ -25,7 +25,9 @@ from core.schemas import (
     TelegramMockDispatchResponse,
     TelegramRealSendRequest,
     TelegramModeRequest,
-    TelegramModeResponse
+    TelegramModeResponse,
+    TelegramModeControlRequest,
+    TelegramModeControlResponse,
 )
 import os
 
@@ -74,6 +76,13 @@ LR2_REPLY_KEYBOARD = {
     "resize_keyboard": True,
 }
 LR6_REPLY_KEYBOARD_REMOVE = {"remove_keyboard": True}
+MODE_SELECTOR_TEXT = "Оберіть режим роботи Telegram-бота:"
+MODE_SELECTOR_KEYBOARD = {
+    "inline_keyboard": [[
+        {"text": "ЛР2 — Сценарний бот", "callback_data": "mode:LR2"},
+        {"text": "ЛР6 — AI-асистент", "callback_data": "mode:LR6"},
+    ]]
+}
 MODE_NOTIFICATION_TEXT = {
     "LR2": (
         "🔄 Режим переключено на ЛР2: Сценарний чат-бот агентства «Рентком».\n\n"
@@ -111,6 +120,135 @@ async def send_mode_notification(chat_id: int, mode: str) -> Optional[int]:
     if not body.get("ok"):
         raise RuntimeError("Telegram API did not accept the notification")
     return (body.get("result") or {}).get("message_id")
+
+
+async def _telegram_api(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not settings.TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/{method}",
+            json=payload,
+        )
+    if response.status_code != 200:
+        raise RuntimeError(f"Telegram API {method} failed (HTTP {response.status_code})")
+    body = response.json()
+    if not body.get("ok"):
+        raise RuntimeError(f"Telegram API {method} returned ok=false")
+    return body
+
+
+def _is_authorized_telegram_admin(user_id: int, chat_id: int) -> bool:
+    admin_user_id = getattr(settings, "TELEGRAM_ADMIN_USER_ID", None)
+    admin_chat_id = getattr(settings, "TELEGRAM_ADMIN_CHAT_ID", None)
+    return bool(
+        admin_user_id
+        and admin_chat_id
+        and str(user_id) == str(admin_user_id)
+        and str(chat_id) == str(admin_chat_id)
+    )
+
+
+@router.post("/mode/telegram-control", response_model=TelegramModeControlResponse)
+async def telegram_mode_control(
+    req: TelegramModeControlRequest,
+    x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    db: Session = Depends(get_db),
+):
+    """Execute a normalized /mode command or inline callback from the single n8n webhook."""
+    internal_key = get_effective_internal_key()
+    token = x_internal_token or _extract_bearer(authorization)
+    if not (internal_key and token and constant_time_equals(token, internal_key)):
+        raise HTTPException(status_code=403, detail="Forbidden: requires valid internal token")
+
+    authorized = _is_authorized_telegram_admin(req.telegram_user_id, req.chat_id)
+    callback_answered = False
+
+    if req.callback_query_id and not req.is_test:
+        answer_text = None if authorized else "Недостатньо прав для зміни режиму."
+        await _telegram_api(
+            "answerCallbackQuery",
+            {
+                "callback_query_id": req.callback_query_id,
+                **({"text": answer_text, "show_alert": True} if answer_text else {}),
+            },
+        )
+        callback_answered = True
+
+    if not authorized:
+        return TelegramModeControlResponse(
+            status="FORBIDDEN", action=req.action, authorized=False,
+            callback_answered=callback_answered,
+            response_text="Недостатньо прав для зміни режиму.",
+        )
+
+    if req.action == "SHOW_SELECTOR":
+        if req.is_test:
+            message_id = None
+        else:
+            sent = await _telegram_api(
+                "sendMessage",
+                {"chat_id": req.chat_id, "text": MODE_SELECTOR_TEXT, "reply_markup": MODE_SELECTOR_KEYBOARD},
+            )
+            message_id = (sent.get("result") or {}).get("message_id")
+        return TelegramModeControlResponse(
+            status="SELECTOR_SENT", action=req.action, mode=get_telegram_bot_mode(db),
+            authorized=True, notification_message_id=message_id,
+            response_text=MODE_SELECTOR_TEXT,
+        )
+
+    if req.action == "DEPRECATED_COMMAND":
+        text = "Команди /mode lr2 та /mode lr6 застаріли. Використовуйте /mode."
+        if not req.is_test:
+            sent = await _telegram_api("sendMessage", {"chat_id": req.chat_id, "text": text})
+            message_id = (sent.get("result") or {}).get("message_id")
+        else:
+            message_id = None
+        return TelegramModeControlResponse(
+            status="DEPRECATED", action=req.action, mode=get_telegram_bot_mode(db),
+            authorized=True, notification_message_id=message_id, response_text=text,
+        )
+
+    if req.action != "SELECT_MODE" or req.callback_data not in ("mode:LR2", "mode:LR6"):
+        raise HTTPException(status_code=400, detail="Invalid Telegram mode control action")
+
+    target_mode = req.callback_data.split(":", 1)[1]
+    updated, changed = set_telegram_bot_mode(target_mode, db)
+    if not changed:
+        text = f"Режим {updated} вже активний. Зміни не потрібні."
+        if not req.is_test:
+            sent = await _telegram_api("sendMessage", {"chat_id": req.chat_id, "text": text})
+            message_id = (sent.get("result") or {}).get("message_id")
+        else:
+            message_id = None
+        return TelegramModeControlResponse(
+            status="UNCHANGED", action=req.action, mode=updated, changed=False,
+            authorized=True, callback_answered=callback_answered,
+            notification_message_id=message_id, response_text=text,
+        )
+
+    text, reply_markup = get_mode_notification(updated)
+    if req.is_test:
+        message_id = None
+    else:
+        try:
+            sent = await _telegram_api(
+                "sendMessage",
+                {"chat_id": req.chat_id, "text": text, "reply_markup": reply_markup},
+            )
+            message_id = (sent.get("result") or {}).get("message_id")
+        except Exception as exc:
+            logger.error("[MODE] Persisted %s but callback notification failed: %s", updated, exc)
+            return TelegramModeControlResponse(
+                status="PARTIAL_SUCCESS", action=req.action, mode=updated, changed=True,
+                authorized=True, callback_answered=callback_answered, response_text=str(exc),
+            )
+    return TelegramModeControlResponse(
+        status="SUCCESS", action=req.action, mode=updated, changed=True,
+        authorized=True, callback_answered=callback_answered,
+        notification_message_id=message_id, response_text=text,
+    )
 
 
 @router.get("/mode", response_model=TelegramModeResponse)
@@ -229,29 +367,21 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
     try:
         active_mode = get_telegram_bot_mode(db)
 
-        # Admin command interceptor: /mode lr2 | /mode lr6 | /mode status
-        admin_chat_id = getattr(settings, "TELEGRAM_ADMIN_CHAT_ID", None)
+        # Administrator mode selector is intercepted before LR2/LR6 business routing.
         chat_id_val = message.get("chat", {}).get("id") or 0
-        if admin_chat_id and str(chat_id_val) == str(admin_chat_id) and text_content.lower().startswith("/mode"):
-            parts = text_content.strip().split()
-            if len(parts) > 1 and parts[1].upper() in ("LR2", "LR6") and db is not None:
-                new_m, changed = set_telegram_bot_mode(parts[1], db)
-                if changed:
-                    notification_text, notification_markup = get_mode_notification(new_m)
-                    res = TelegramResponseMock(
-                        route="Admin Command",
-                        response_text=notification_text,
-                        reply_markup=notification_markup,
-                    )
-                else:
-                    res = TelegramResponseMock(
-                        route="Admin Command",
-                        response_text=f"Режим {new_m} вже активний. Зміни не виконано.",
-                    )
+        user_id_val = message.get("from", {}).get("id") or 0
+        is_admin_update = _is_authorized_telegram_admin(user_id_val, chat_id_val)
+        if is_admin_update and text_content.lower().startswith("/mode"):
+            if text_content.lower() == "/mode":
+                res = TelegramResponseMock(
+                    route="Admin Mode Selector",
+                    response_text=MODE_SELECTOR_TEXT,
+                    reply_markup=MODE_SELECTOR_KEYBOARD,
+                )
             else:
                 res = TelegramResponseMock(
-                    route="Admin Command",
-                    response_text=f"Поточний активний режим бота: {active_mode}\nДоступні команди: /mode lr2, /mode lr6, /mode status"
+                    route="Deprecated Admin Command",
+                    response_text="Команди /mode lr2 та /mode lr6 застаріли. Використовуйте /mode.",
                 )
         elif active_mode == "LR2":
             # PURE LR2 EXECUTION MODE
@@ -454,18 +584,34 @@ async def acquire_telegram_inbox_guard(
                 detail="Forbidden: invalid internal service authorization."
             )
 
-    # 2. Extract message parameters
-    msg = guard_req.message or (guard_req.body.get("message") if guard_req.body else None) or {}
+    # 2. Normalize messages and callback queries before any LR2/LR6 routing.
+    raw_body = guard_req.body or {}
+    callback = raw_body.get("callback_query") or {}
+    msg = guard_req.message or raw_body.get("message") or callback.get("message") or {}
     chat_id = guard_req.chat_id or (msg.get("chat") or {}).get("id") or 12345
-    text_content = guard_req.text or msg.get("text") or (guard_req.body.get("text") if guard_req.body else "") or ""
+    text_content = guard_req.text or msg.get("text") or raw_body.get("text") or ""
+    telegram_user_id = (callback.get("from") or {}).get("id") or (msg.get("from") or {}).get("id")
+    callback_query_id = callback.get("id")
+    callback_data = callback.get("data")
+    normalized_text = text_content.strip().lower()
+    if callback_data in ("mode:LR2", "mode:LR6"):
+        mode_action = "SELECT_MODE"
+    elif normalized_text == "/mode":
+        mode_action = "SHOW_SELECTOR"
+    elif normalized_text.startswith("/mode "):
+        mode_action = "DEPRECATED_COMMAND"
+    else:
+        mode_action = "NONE"
 
     # 3. Form standard update dict for idempotency manager
     update_data = {
         "update_id": guard_req.update_id,
         "message": {
             "chat": {"id": chat_id},
-            "text": text_content
-        }
+            "text": text_content,
+            "from": {"id": telegram_user_id},
+        },
+        "callback_query": callback or None,
     }
 
     update_id, clean_chat_id, clean_text = telegram_idempotency.parse_update_id(update_data)
@@ -498,7 +644,11 @@ async def acquire_telegram_inbox_guard(
         text=clean_text,
         is_test=guard_req.is_test,
         cached_response=None,
-        mode=current_mode
+        mode=current_mode,
+        mode_action=mode_action,
+        telegram_user_id=telegram_user_id,
+        callback_query_id=callback_query_id,
+        callback_data=callback_data,
     )
 
 

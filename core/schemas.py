@@ -172,6 +172,28 @@ class TelegramInboxGuardResponse(BaseModel):
     is_test: bool = False
     cached_response: Optional[Dict[str, Any]] = None
     mode: str = "LR2"
+    mode_action: str = "NONE"
+    telegram_user_id: Optional[int] = None
+    callback_query_id: Optional[str] = None
+    callback_data: Optional[str] = None
+
+class TelegramModeControlRequest(BaseModel):
+    action: str
+    chat_id: int
+    telegram_user_id: int
+    callback_query_id: Optional[str] = None
+    callback_data: Optional[str] = None
+    is_test: bool = False
+
+class TelegramModeControlResponse(BaseModel):
+    status: str
+    action: str
+    mode: Optional[str] = None
+    changed: bool = False
+    authorized: bool = False
+    callback_answered: bool = False
+    notification_message_id: Optional[int] = None
+    response_text: Optional[str] = None
 
 class TelegramModeRequest(BaseModel):
     mode: str

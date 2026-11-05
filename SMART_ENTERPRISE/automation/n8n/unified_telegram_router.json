@@ -58,7 +58,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { update_id: ($json.body && $json.body.update_id) ? $json.body.update_id : $json.update_id ? $json.update_id : null, chat_id: ($json.message && $json.message.chat) ? $json.message.chat.id : ($json.body && $json.body.message && $json.body.message.chat) ? $json.body.message.chat.id : ($json.body && $json.body.chat_id) ? $json.body.chat_id : 12345, text: ($json.message && $json.message.text) ? $json.message.text : ($json.body && $json.body.message && $json.body.message.text) ? $json.body.message.text : ($json.body && $json.body.text) ? $json.body.text : ($json.text ? $json.text : ''), is_test: Boolean(($json.headers && ($json.headers['x-test-token'] || $json.headers['X-Test-Token'])) || ($json.body && $json.body.is_test)) } }}",
+        "jsonBody": "={{ { update_id: ($json.body && $json.body.update_id) ? $json.body.update_id : $json.update_id ? $json.update_id : null, chat_id: ($json.message && $json.message.chat) ? $json.message.chat.id : ($json.body && $json.body.message && $json.body.message.chat) ? $json.body.message.chat.id : ($json.body && $json.body.callback_query && $json.body.callback_query.message && $json.body.callback_query.message.chat) ? $json.body.callback_query.message.chat.id : ($json.body && $json.body.chat_id) ? $json.body.chat_id : 12345, text: ($json.message && $json.message.text) ? $json.message.text : ($json.body && $json.body.message && $json.body.message.text) ? $json.body.message.text : ($json.body && $json.body.text) ? $json.body.text : ($json.text ? $json.text : ''), body: $json.body || $json, is_test: Boolean(($json.headers && ($json.headers['x-test-token'] || $json.headers['X-Test-Token'])) || ($json.body && $json.body.is_test)) } }}",
         "options": {
           "timeout": 15000
         },
@@ -132,6 +132,68 @@
         780,
         100
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-mode-control",
+              "leftValue": "={{ $json.mode_action }}",
+              "rightValue": "NONE",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "u-node-is-mode-control",
+      "name": "Is Telegram Mode Control?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        780,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://business-api:8000/api/v1/telegram/mode/telegram-control",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { action: $json.mode_action, chat_id: $json.chat_id, telegram_user_id: $json.telegram_user_id, callback_query_id: $json.callback_query_id, callback_data: $json.callback_data, is_test: $json.is_test } }}",
+        "options": {
+          "timeout": 15000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "u-node-execute-mode-control",
+      "name": "Execute Telegram Mode Control",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1020,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomInternalAuth",
+          "name": "Rentkom Internal Auth"
+        }
+      }
     },
     {
       "parameters": {
@@ -506,7 +568,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { update_id: $('Acquire Telegram Inbox Guard').item.json.update_id, route: 'Executed', response_text: $json.result ? $json.result.text : ($json.answer ? $json.answer : 'OK') } }}",
+        "jsonBody": "={{ { update_id: $('Acquire Telegram Inbox Guard').item.json.update_id, route: 'Executed', response_text: $json.result ? $json.result.text : ($json.response_text ? $json.response_text : ($json.answer ? $json.answer : 'OK')) } }}",
         "options": {
           "timeout": 15000
         },
@@ -567,7 +629,7 @@
       "main": [
         [
           {
-            "node": "Mode Switch (LR2 vs LR6)",
+            "node": "Is Telegram Mode Control?",
             "type": "main",
             "index": 0
           }
@@ -575,6 +637,35 @@
         [
           {
             "node": "Drop Duplicate Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Telegram Mode Control?": {
+      "main": [
+        [
+          {
+            "node": "Execute Telegram Mode Control",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mode Switch (LR2 vs LR6)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Telegram Mode Control": {
+      "main": [
+        [
+          {
+            "node": "Finalize Telegram Inbox",
             "type": "main",
             "index": 0
           }

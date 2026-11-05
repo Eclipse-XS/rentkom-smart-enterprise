@@ -17,6 +17,7 @@ if not settings.INTERNAL_API_KEY:
     settings.INTERNAL_API_KEY = "95612a831a16e21414d0c12d05c5aa282293450936ad8e5704529f4673405360"
 if not settings.ADMIN_API_KEY:
     settings.ADMIN_API_KEY = "rentkom-demo-admin-key-2026"
+settings.TELEGRAM_ADMIN_USER_ID = settings.TELEGRAM_ADMIN_CHAT_ID
 
 # In-memory SQLite with StaticPool so all connections share the same memory DB
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
