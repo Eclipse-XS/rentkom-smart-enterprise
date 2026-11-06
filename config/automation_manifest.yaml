@@ -1,0 +1,314 @@
+# ==============================================================================
+# RENTKOM SMART ENTERPRISE: AUTOMATION WORKFLOW MANIFEST
+# Declarative Configuration-as-Code for n8n Workflow Orchestration
+# ==============================================================================
+version: "1.0"
+environment: "${ENVIRONMENT:-demo}"
+
+workflows:
+  # ----------------------------------------------------------------------------
+  # 1. Unified Telegram Router (LR2 + LR6)
+  # ----------------------------------------------------------------------------
+  - id: RentkomTelegramUnified01
+    file: SMART_ENTERPRISE/automation/n8n/unified_telegram_router.json
+    name: "Rentkom Unified Telegram Router (LR2 + LR6)"
+    business_capability: "TELEGRAM_AUTOMATION_AND_RAG_ROUTER"
+    description: "Unified entry point with strict mode dispatch (LR2 rule-based bot vs LR6 AI/RAG agent based on system_config.telegram_bot_mode). Enforces isolation without Telegram webhook conflicts."
+    operating_modes:
+      - mode: LR2
+        description: "Pure rule-based bot: Start menu with persistent keyboard, Buying/Selling, Landlord Services, and deterministic fallback without RAG."
+      - mode: LR6
+        description: "Pure AI/RAG assistant: Knowledge base grounded Q&A over corporate documents, dialog memory, and source attribution without menu interception."
+    expected_state: published
+    required: true
+    trigger_type: webhook
+    triggers:
+      - name: "Telegram Ingress"
+        type: "n8n-nodes-base.webhook"
+        path: "rentkom-telegram-ingress-webhook"
+        method: POST
+        auth: headerAuth
+        credential_id: RentkomTelegramWebhookSecret
+      - name: "Test Webhook Ingress"
+        type: "n8n-nodes-base.webhook"
+        path: "rentkom-unified-router-test"
+        method: POST
+        auth: headerAuth
+        credential_id: RentkomTestWebhookSecret
+    dependencies:
+      services:
+        - postgres
+        - business-api
+        - qdrant
+        - ollama
+      credentials:
+        - RentkomTelegramWebhookSecret
+        - RentkomTestWebhookSecret
+        - RentkomInternalAuth
+      env_vars:
+        - INTERNAL_API_KEY
+        - TEST_WEBHOOK_SECRET
+        - TELEGRAM_SECRET_TOKEN
+    conflicts_with:
+      - i4IMaq12Rl7G6xwy # telegram_rule_bot
+      - LAB6TelegramRAG1 # ai_agent_rag
+    external_integration:
+      provider: telegram
+      mode: hybrid
+      status_external: blocked_unless_token_configured
+      status_synthetic: ready
+      mock_endpoint: "http://business-api:8000/api/v1/telegram/mock-dispatcher"
+    smoke_test:
+      enabled: true
+      endpoint: "http://127.0.0.1:5678/webhook/rentkom-unified-router-test"
+      method: POST
+      auth_header: "X-Test-Token"
+      auth_token_env: TEST_WEBHOOK_SECRET
+      payload:
+        update_id: 888001
+        message:
+          message_id: 7001
+          chat:
+            id: 12345678
+            type: private
+          date: 1729000000
+          text: "/start"
+      expected_status: 200
+
+  # ----------------------------------------------------------------------------
+  # 2. Customer Feedback Ingestion & Alerting (LR3 + LR5)
+  # ----------------------------------------------------------------------------
+  - id: gaPyYUSgGKVK2vKc
+    file: SMART_ENTERPRISE/automation/n8n/feedback_to_telegram.json
+    name: "Rentkom: Customer Feedback Ingestion & Telegram Channel Alert"
+    business_capability: "CUSTOMER_FEEDBACK_INGESTION_AND_ALERTING"
+    description: "Ingests customer reviews and ratings from Google Sheets/Forms or synthetic test webhook, persists them to PostgreSQL customer_feedbacks, and dispatches Telegram channel alert."
+    expected_state: published
+    required: true
+    trigger_type: hybrid
+    triggers:
+      - name: "Google Sheets Trigger"
+        type: "n8n-nodes-base.googleSheetsTrigger"
+        event: rowAdded
+        credential_id: w2ZVcryJf7CxkU0H
+      - name: "Test Feedback Webhook"
+        type: "n8n-nodes-base.webhook"
+        path: "rentkom-feedback-test"
+        method: POST
+        auth: none
+    dependencies:
+      services:
+        - postgres
+        - business-api
+      credentials:
+        - w2ZVcryJf7CxkU0H # googleSheetsTriggerOAuth2Api (external)
+        - egDthAT3oVlnSRjQ # telegramApi (optional channel alert)
+      env_vars:
+        - TELEGRAM_ADMIN_CHAT_ID
+    conflicts_with: []
+    external_integration:
+      provider: google_sheets
+      mode: hybrid
+      status_external: blocked_missing_oauth
+      status_synthetic: ready
+      notes: "Real Google Sheets polling requires interactive Google OAuth consent. Synthetic webhook operates without external dependencies."
+    smoke_test:
+      enabled: true
+      endpoint: "http://127.0.0.1:5678/webhook/rentkom-feedback-test"
+      method: POST
+      payload:
+        client_identifier: "Smoke Test Reviewer"
+        service_rating: 5
+        realtor_rating: 5
+        feedback_text: "Smoke test evaluation of feedback pipeline"
+        row_number: "smoke-test-fb-row-1"
+      expected_status: 200
+
+  # ----------------------------------------------------------------------------
+  # 3. Google Forms to PostgreSQL and Gmail (LR4)
+  # ----------------------------------------------------------------------------
+  - id: LAB4RealEstate01
+    file: SMART_ENTERPRISE/automation/n8n/forms_postgres_email.json
+    name: "LAB4 | Агентство нерухомості | Forms to PostgreSQL and Gmail"
+    business_capability: "FORM_REQUEST_INTAKE_AND_NOTIFICATION"
+    description: "Intake of consultation and property service requests via Google Forms / Google Sheets or synthetic test webhook, validation, idempotent PostgreSQL persistence, and transactional outbox email notification."
+    expected_state: published
+    required: true
+    trigger_type: hybrid
+    triggers:
+      - name: "Google Sheets Trigger"
+        type: "n8n-nodes-base.googleSheetsTrigger"
+        event: rowAdded
+        credential_id: w2ZVcryJf7CxkU0H
+      - name: "Test Forms Ingress"
+        type: "n8n-nodes-base.webhook"
+        path: "rentkom-forms-test"
+        method: POST
+        auth: headerAuth
+        credential_id: RentkomTestWebhookSecret
+    dependencies:
+      services:
+        - postgres
+      credentials:
+        - 0hyM64j1c9hxAiq7 # postgres (internal)
+        - w2ZVcryJf7CxkU0H # googleSheetsTriggerOAuth2Api (external)
+        - GsNbRh9jsuecZBVq # gmailOAuth2 (external)
+        - RentkomTestWebhookSecret
+      env_vars:
+        - TEST_WEBHOOK_SECRET
+        - RENTKOM_APP_PASSWORD
+    conflicts_with: []
+    external_integration:
+      provider: google_forms_and_gmail
+      mode: hybrid
+      status_external: blocked_missing_oauth
+      status_synthetic: ready
+      notes: "Real Google Forms polling and Gmail delivery require interactive Google OAuth consent. In local/demo mode, idempotent PostgreSQL insertion succeeds and notification is safely queued in notification_outbox and handled by Outbox Worker."
+    smoke_test:
+      enabled: true
+      endpoint: "http://127.0.0.1:5678/webhook/rentkom-forms-test"
+      method: POST
+      auth_header: "X-Test-Token"
+      auth_token_env: TEST_WEBHOOK_SECRET
+      payload:
+        full_name: "Smoke Test Lead"
+        phone: "+380679988776"
+        request_purpose: "Хочу купити"
+        property_type: "Квартира"
+        property_location: "Львів, вул. Личаківська"
+        consultation_date: "2026-11-30"
+        additional_comments: "Automated smoke test verification"
+        source_row_id: "smoke-test-lead-row-1"
+      expected_status: 200
+
+  # ----------------------------------------------------------------------------
+  # 4. Monitoring API (LR5 Legacy Webhook Bridge)
+  # ----------------------------------------------------------------------------
+  - id: LAB5MonitoringAPI1
+    file: SMART_ENTERPRISE/automation/n8n/monitoring_api.json
+    name: "LAB5 | Агентство нерухомості | Monitoring API"
+    business_capability: "LEGACY_MONITORING_BRIDGE"
+    description: "Exposes legacy n8n webhooks for Grafana. In Smart Enterprise, Grafana directly queries PostgreSQL and Business API, making this webhook bridge superseded."
+    expected_state: unpublished
+    required: false
+    trigger_type: webhook
+    triggers:
+      - name: "API популярності типів"
+        path: "lab5/property-types-popularity"
+        method: GET
+      - name: "API задоволеності клієнтів"
+        path: "lab5/customer-satisfaction"
+        method: GET
+    dependencies:
+      services:
+        - postgres
+      credentials:
+        - 0hyM64j1c9hxAiq7
+        - LAB5SheetsCred1
+    conflicts_with: []
+    external_integration:
+      provider: internal
+      status: superseded_by_native_grafana
+
+  # ----------------------------------------------------------------------------
+  # 5. Rule-Based Fallback Bot (LR2 Legacy Prototype)
+  # ----------------------------------------------------------------------------
+  - id: i4IMaq12Rl7G6xwy
+    file: SMART_ENTERPRISE/automation/n8n/telegram_rule_bot.json
+    name: "Rentkom: Telegram Bot Rule-Based Fallback"
+    business_capability: "LEGACY_RULE_BOT"
+    description: "Original rule-based Telegram bot. Superseded by Unified Telegram Router. MUST REMAIN UNPUBLISHED to prevent webhook polling conflict."
+    expected_state: unpublished
+    required: false
+    trigger_type: telegramTrigger
+    triggers:
+      - name: "Telegram Trigger"
+        type: "n8n-nodes-base.telegramTrigger"
+    dependencies:
+      credentials:
+        - egDthAT3oVlnSRjQ
+    conflicts_with:
+      - RentkomTelegramUnified01
+    external_integration:
+      provider: telegram
+      status: superseded_conflict_prevented
+
+  # ----------------------------------------------------------------------------
+  # 6. Standalone RAG Telegram Agent (LR6 Legacy Prototype)
+  # ----------------------------------------------------------------------------
+  - id: LAB6TelegramRAG1
+    file: SMART_ENTERPRISE/automation/n8n/ai_agent_rag.json
+    name: "LAB6 | Агентство нерухомості | RAG Telegram Agent"
+    business_capability: "LEGACY_TELEGRAM_RAG_AGENT"
+    description: "Standalone LangChain RAG agent on Telegram. Superseded by Unified Telegram Router and Business Core RAG API. MUST REMAIN UNPUBLISHED to prevent Telegram webhook conflict."
+    expected_state: unpublished
+    required: false
+    trigger_type: telegramTrigger
+    triggers:
+      - name: "Telegram Trigger"
+        type: "n8n-nodes-base.telegramTrigger"
+    dependencies:
+      services:
+        - qdrant
+        - ollama
+      credentials:
+        - egDthAT3oVlnSRjQ
+        - CiIHbLPwsosTWHf6
+        - Ntr00wfW3KA7ZmrR
+    conflicts_with:
+      - RentkomTelegramUnified01
+    external_integration:
+      provider: telegram
+      status: superseded_conflict_prevented
+
+  # ----------------------------------------------------------------------------
+  # 7. Interactive Canvas Chat Test (LR6 Developer Utility)
+  # ----------------------------------------------------------------------------
+  - id: LAB6ChatRAGTest1
+    file: SMART_ENTERPRISE/automation/n8n/ai_chat_test.json
+    name: "LAB6 | Агентство нерухомості | RAG Chat Test"
+    business_capability: "MANUAL_DEV_CHAT_UTILITY"
+    description: "Interactive canvas chat widget in n8n for manual testing of RAG models. Intended for manual developer testing, not background automation."
+    expected_state: unpublished
+    required: false
+    trigger_type: chatTrigger
+    triggers:
+      - name: "When chat message received"
+        type: "@n8n/n8n-nodes-langchain.chatTrigger"
+    dependencies:
+      services:
+        - qdrant
+        - ollama
+      credentials:
+        - CiIHbLPwsosTWHf6
+        - Ntr00wfW3KA7ZmrR
+    conflicts_with: []
+    external_integration:
+      provider: n8n_canvas_chat
+      status: manual_utility_only
+
+  # ----------------------------------------------------------------------------
+  # 8. Document Ingestion Pipeline (LR6 Maintenance Utility)
+  # ----------------------------------------------------------------------------
+  - id: LAB6Ingestion01
+    file: SMART_ENTERPRISE/automation/n8n/document_ingestion.json
+    name: "LAB6 | Агентство нерухомості | Індексація документів"
+    business_capability: "DOCUMENT_INGESTION_MAINTENANCE"
+    description: "Form-based ingestion of PDF and DOCX documents into Qdrant vector store. Controlled maintenance operation, not run on startup."
+    expected_state: unpublished
+    required: false
+    trigger_type: formTrigger
+    triggers:
+      - name: "Завантаження документів"
+        type: "n8n-nodes-base.formTrigger"
+    dependencies:
+      services:
+        - qdrant
+        - ollama
+      credentials:
+        - CiIHbLPwsosTWHf6
+        - Ntr00wfW3KA7ZmrR
+    conflicts_with: []
+    external_integration:
+      provider: internal_qdrant
+      status: maintenance_utility_only

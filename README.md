@@ -167,6 +167,30 @@ python tools/manage.py up
    docker compose --profile connected up -d --build
    ```
 
+### Unified Windows startup
+
+External prerequisites:
+
+- Docker Desktop with Compose;
+- Python 3.13 and dependencies from `requirements.txt` (preferably in `.venv`);
+- Ollama listening on `127.0.0.1:11434`;
+- `cloudflared` installed in `PATH` or a standard Windows installation directory;
+- a local `.env` created from `.env.example` with the required secrets and Telegram settings.
+
+From the repository root, start or reconcile the complete connected deployment with:
+
+```powershell
+.\tools\start_demo.ps1
+```
+
+The command reuses healthy containers and a healthy Cloudflare Quick Tunnel, restores a changed tunnel URL after restart, registers the Telegram webhook without dropping pending updates, and reports `STATUS: READY` only after service, tunnel, and webhook verification. Runtime tunnel state and logs remain under the ignored `runtime/` directory.
+
+Stop the local stack without deleting volumes or database data:
+
+```powershell
+.\tools\stop_demo.ps1
+```
+
 ---
 
 ## 8. API Reference
