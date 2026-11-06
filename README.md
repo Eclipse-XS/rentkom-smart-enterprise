@@ -115,6 +115,8 @@ flowchart TD
 | **n8n** | `rentkom-n8n` (`rentkom/n8n:2.46.5-brotli1.2.1`) | `5678` | `connected`, `full-ai` | n8n 2.46.5 on the exact upstream digest, with the native Alpine Brotli package reproducibly upgraded to `1.2.1-r0` |
 | **Ollama** | `rentkom-ollama` (`ollama/ollama:latest`) | `11434` | `full-ai` (or host native) | Local embedding (`mxbai-embed-large`) and chat generation (`qwen3:4b-instruct-2507-q4_K_M`) |
 
+Customer feedback ownership is intentionally one-way: LR3 writes responses to Google Sheets, and LR5 reads that sheet to calculate Grafana CSAT metrics. The legacy PostgreSQL `customer_feedback` API remains available for compatibility but is not the source for LR5 panels. Connected LR3/LR4/LR5 operation requires the existing n8n Google OAuth credentials to remain authorized; reconciliation preserves credential IDs and encrypted token data but cannot replace interactive Google consent. On Windows, the supported RAG deployment may use the host Ollama service through `host.docker.internal`, retaining CPU fallback when GPU acceleration is unavailable.
+
 ---
 
 ## 5. Execution Modes (`demo` vs `connected` vs `full-ai`)

@@ -476,6 +476,8 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
             is_duplicate=True
         )
 
+    telegram_idempotency.start_renewal(event_key, update_dict)
+
     message = update.message or {}
     text_content = (message.get("text") or "").strip()
 
@@ -757,6 +759,7 @@ async def acquire_telegram_inbox_guard(
         )
 
     current_mode = get_telegram_bot_mode(db)
+    telegram_idempotency.start_renewal(event_key, update_data, guard_req.bot_id)
     logger.info(f"[TELEGRAM-GUARD] Update {update_id} acquired lease. Action: EXECUTE. Active Mode: {current_mode}")
     return TelegramInboxGuardResponse(
         action="EXECUTE",
@@ -772,6 +775,7 @@ async def acquire_telegram_inbox_guard(
         callback_query_id=callback_query_id,
         callback_data=callback_data,
         message_id=message_id,
+        owner_token=telegram_idempotency.get_owner_token(event_key),
     )
 
 
@@ -824,6 +828,8 @@ async def complete_telegram_inbox(
             )
 
     event_key = f"tg_update:{req.update_id}"
+    if not req.owner_token:
+        raise HTTPException(status_code=409, detail="Missing processing owner token.")
     cached = CachedResponse(
         route=req.route,
         response_text=req.response_text,
@@ -838,7 +844,8 @@ async def complete_telegram_inbox(
         cached,
         db=db,
         update_data={"update_id": req.update_id, "message": {"chat": {"id": 0}, "text": ""}},
-        bot_id=req.bot_id
+        bot_id=req.bot_id,
+        owner_token=req.owner_token,
     )
     return {"status": "SUCCESS", "update_id": req.update_id}
 

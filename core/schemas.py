@@ -179,6 +179,7 @@ class TelegramInboxGuardResponse(BaseModel):
     callback_query_id: Optional[str] = None
     callback_data: Optional[str] = None
     message_id: Optional[int] = None
+    owner_token: Optional[str] = None
 
 class TelegramModeControlRequest(BaseModel):
     action: str
@@ -226,6 +227,7 @@ class TelegramInboxCompleteRequest(BaseModel):
     reply_markup: Optional[Dict[str, Any]] = None
     sources: Optional[List[str]] = None
     confidence_score: Optional[float] = None
+    owner_token: Optional[str] = None
 
 class TelegramMockDispatchRequest(BaseModel):
     chat_id: int

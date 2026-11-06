@@ -5,6 +5,37 @@
   "nodes": [
     {
       "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "typeValidation": "strict", "version": 2},
+          "conditions": [{
+            "id": "lr4-validation-status",
+            "leftValue": "={{ $json.validation_status }}",
+            "rightValue": "VALID",
+            "operator": {"type": "string", "operation": "equals"}
+          }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "lr4-route-validation-result",
+      "name": "Route Validation Result",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-120, 280]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => ({ json: { validation_status: 'REJECTED', source_row_id: item.json.source_row_id, validation_error_code: item.json.validation_error_code, validation_error: item.json.validation_error, processed_at: item.json.processed_at } }));"
+      },
+      "id": "lr4-record-rejection",
+      "name": "Record Rejection Diagnostic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [100, 430],
+      "notes": "Structured non-sensitive rejection record retained in n8n execution history; no PostgreSQL business row or success notification is created."
+    },
+    {
+      "parameters": {
         "pollTimes": {
           "item": [
             {
@@ -70,7 +101,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst allowedPurpose = new Set(['Хочу купити','Хочу орендувати','Хочу продати','Хочу здати в оренду']);\nconst allowedType = new Set(['Квартира','Будинок','Комерційне приміщення','Земля']);\n\nconst results = [];\nfor (const item of items) {\n  const data = item.json.body ?? item.json;\n  const required = (name, alt) => {\n    const v = String(data[name] ?? (alt ? data[alt] : '') ?? '').trim();\n    if (!v) throw new Error(`Порожнє обов'язкове поле: ${name}`);\n    return v;\n  };\n  try {\n    const full_name = required('ПІБ', 'full_name');\n    const phone = required('Контактний телефон', 'phone');\n    if (!/^\\+?[0-9 ()-]{10,20}$/.test(phone)) continue;\n    const request_purpose = required('Ціль запиту', 'request_purpose');\n    const property_type = required('Тип нерухомості', 'property_type');\n    if (!allowedPurpose.has(request_purpose)) continue;\n    if (!allowedType.has(property_type)) continue;\n    const property_location = required(\"Місцезнаходження об'єкта\", 'property_location');\n    const rawDate = required('Бажана дата консультації', 'consultation_date');\n    let consultation_date;\n    let m = rawDate.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);\n    if (m) consultation_date = rawDate;\n    else {\n      m = rawDate.match(/^(\\d{2})[./](\\d{2})[./](\\d{4})$/);\n      if (!m) continue;\n      consultation_date = `${m[3]}-${m[2]}-${m[1]}`;\n    }\n    const parsed = new Date(`${consultation_date}T00:00:00Z`);\n    if (Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0,10) !== consultation_date) continue;\n    const sourceTimestamp = String(data['Отметка времени'] ?? data['Позначка часу'] ?? data['Відмітка часу'] ?? data.Timestamp ?? data.timestamp ?? new Date().toISOString()).trim();\n    const source_row_id = String(data.source_row_id ?? `19yHm6hi7G2b8s3y8pFVSoCn8m3HiWJDlFr_CdXMnoUg:567687119:${encodeURIComponent(sourceTimestamp)}:${encodeURIComponent(phone)}:${encodeURIComponent(full_name)}`);\n    const additional_comments = String(data['Додаткові коментарі'] ?? data.additional_comments ?? '').trim() || null;\n    results.push({ json: { full_name, phone, request_purpose, property_type, property_location, consultation_date, additional_comments, source_row_id } });\n  } catch (e) {\n    // skip invalid item\n  }\n}\nreturn results;"
+        "jsCode": "const items = $input.all();\nconst allowedPurpose = new Set(['Хочу купити','Хочу орендувати','Хочу продати','Хочу здати в оренду']);\nconst allowedType = new Set(['Квартира','Будинок','Комерційне приміщення','Земля']);\nconst results = [];\nfor (let index = 0; index < items.length; index++) {\n  const data = items[index].json.body ?? items[index].json;\n  const sourceTimestamp = String(data['Отметка времени'] ?? data['Позначка часу'] ?? data['Відмітка часу'] ?? data.Timestamp ?? data.timestamp ?? '').trim();\n  const stableId = String(data.source_row_id ?? `19yHm6hi7G2b8s3y8pFVSoCn8m3HiWJDlFr_CdXMnoUg:567687119:${encodeURIComponent(sourceTimestamp || `item-${index}`)}`);\n  const reject = (code, explanation) => ({ json: { validation_status: 'REJECTED', source_row_id: stableId, validation_error_code: code, validation_error: explanation, processed_at: new Date().toISOString() } });\n  const value = (name, alt) => String(data[name] ?? (alt ? data[alt] : '') ?? '').trim();\n  const full_name = value('ПІБ', 'full_name');\n  if (!full_name) { results.push(reject('MISSING_FULL_NAME', 'Не вказано ПІБ')); continue; }\n  const phone = value('Контактний телефон', 'phone');\n  if (!phone) { results.push(reject('MISSING_PHONE', 'Не вказано контактний телефон')); continue; }\n  if (!/^\\+?[0-9 ()-]{10,20}$/.test(phone)) { results.push(reject('INVALID_PHONE', 'Некоректний формат телефону')); continue; }\n  const request_purpose = value('Ціль запиту', 'request_purpose');\n  if (!allowedPurpose.has(request_purpose)) { results.push(reject('UNSUPPORTED_PURPOSE', 'Непідтримувана ціль запиту')); continue; }\n  const property_type = value('Тип нерухомості', 'property_type');\n  if (!allowedType.has(property_type)) { results.push(reject('UNSUPPORTED_PROPERTY_TYPE', 'Непідтримуваний тип нерухомості')); continue; }\n  const property_location = value(\"Місцезнаходження об'єкта\", 'property_location');\n  if (!property_location) { results.push(reject('MISSING_LOCATION', 'Не вказано місцезнаходження')); continue; }\n  const rawDate = value('Бажана дата консультації', 'consultation_date');\n  let consultation_date;\n  let m = rawDate.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);\n  if (m) consultation_date = rawDate;\n  else { m = rawDate.match(/^(\\d{2})[./](\\d{2})[./](\\d{4})$/); if (m) consultation_date = `${m[3]}-${m[2]}-${m[1]}`; }\n  const parsed = consultation_date ? new Date(`${consultation_date}T00:00:00Z`) : null;\n  if (!parsed || Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0,10) !== consultation_date) { results.push(reject('INVALID_CONSULTATION_DATE', 'Некоректна дата консультації')); continue; }\n  const source_row_id = String(data.source_row_id ?? `${stableId}:${encodeURIComponent(phone)}:${encodeURIComponent(full_name)}`);\n  const additional_comments = String(data['Додаткові коментарі'] ?? data.additional_comments ?? '').trim() || null;\n  results.push({ json: { validation_status: 'VALID', full_name, phone, request_purpose, property_type, property_location, consultation_date, additional_comments, source_row_id, processed_at: new Date().toISOString() } });\n}\nreturn results;"
       },
       "id": "8a5a71d3-d30b-4179-9132-0c96a70cd44c",
       "name": "Validate and Normalize",
@@ -194,7 +225,25 @@
       "main": [
         [
           {
+            "node": "Route Validation Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Validation Result": {
+      "main": [
+        [
+          {
             "node": "Insert Request Idempotently",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Rejection Diagnostic",
             "type": "main",
             "index": 0
           }

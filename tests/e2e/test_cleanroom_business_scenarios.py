@@ -169,6 +169,7 @@ def test_scenario_d_telegram_update_deduplication_guard(db_session):
         "/telegram/inbox/complete",
         {
             "update_id": dup_update_id,
+            "owner_token": res1["owner_token"],
             "route": "Start Menu",
             "response_text": "Вітаємо у чат-боті..."
         },

@@ -157,12 +157,15 @@ CREATE TABLE IF NOT EXISTS public.telegram_inbox (
     locked_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at TIMESTAMPTZ,
     retry_count INT NOT NULL DEFAULT 0,
+    owner_token VARCHAR(36),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_telegram_inbox_bot_update UNIQUE (bot_id, update_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_telegram_inbox_bot_update ON public.telegram_inbox (bot_id, update_id);
 CREATE INDEX IF NOT EXISTS idx_telegram_inbox_status_locked ON public.telegram_inbox (status, locked_at);
+ALTER TABLE public.telegram_inbox ADD COLUMN IF NOT EXISTS owner_token VARCHAR(36);
+CREATE INDEX IF NOT EXISTS idx_telegram_inbox_owner ON public.telegram_inbox (owner_token);
 
 
 -- 8b. Inbound Lead Submissions (Unverified Public Ingress Staging - SEC-01 & SEC-02)

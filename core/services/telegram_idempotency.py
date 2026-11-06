@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import logging
 import time
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, Tuple
 from pydantic import BaseModel
@@ -32,6 +33,8 @@ class TelegramIdempotencyManager:
         self.lease_timeout_seconds = lease_timeout_seconds
         self._in_memory_cache: Dict[str, CachedResponse] = {}
         self._in_progress: Dict[str, asyncio.Event] = {}
+        self._owners: Dict[str, str] = {}
+        self._renewal_tasks: Dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
 
     def get_event_key(self, update: Dict[str, Any]) -> str:
@@ -81,6 +84,7 @@ class TelegramIdempotencyManager:
         if db is not None:
             try:
                 update_id, chat_id, text_content = self.parse_update_id(update_data or {})
+                owner_token = str(uuid.uuid4())
                 dialect_name = db.get_bind().dialect.name if db.get_bind() is not None else "postgresql"
 
                 if dialect_name != "postgresql":
@@ -111,8 +115,10 @@ class TelegramIdempotencyManager:
                                 )
                         row.status = "PROCESSING"
                         row.locked_at = now_utc
+                        row.owner_token = owner_token
                         row.retry_count = (row.retry_count or 0) + 1
                         db.commit()
+                        self._owners[event_key] = owner_token
                         return True, None
                     else:
                         new_row = TelegramInbox(
@@ -123,18 +129,22 @@ class TelegramIdempotencyManager:
                             status="PROCESSING",
                             locked_at=now_utc,
                             retry_count=0,
+                            owner_token=owner_token,
                             created_at=now_utc,
                         )
                         db.add(new_row)
                         db.commit()
+                        self._owners[event_key] = owner_token
                         return True, None
 
                 # 1. Check if already completed or in-progress in DB (PostgreSQL using DB server clock)
                 check_res = db.execute(text("""
-                    SELECT status, response_payload, (locked_at > NOW() - INTERVAL '30 seconds') AS lease_active, retry_count
+                    SELECT status, response_payload,
+                           (locked_at > NOW() - make_interval(secs => :lease_seconds)) AS lease_active,
+                           retry_count
                     FROM public.telegram_inbox
                     WHERE bot_id = :bot_id AND update_id = :update_id;
-                """), {"bot_id": bot_id, "update_id": update_id}).fetchone()
+                """), {"bot_id": bot_id, "update_id": update_id, "lease_seconds": self.lease_timeout_seconds}).fetchone()
 
                 if check_res:
                     status, payload, lease_active, retry_count = check_res
@@ -160,28 +170,32 @@ class TelegramIdempotencyManager:
                 # 2. Atomic claim via UPSERT with lease recovery
                 claim_res = db.execute(text("""
                     INSERT INTO public.telegram_inbox (
-                        bot_id, update_id, chat_id, message_text, status, locked_at, retry_count, created_at
+                        bot_id, update_id, chat_id, message_text, status, locked_at, retry_count, owner_token, created_at
                     )
                     VALUES (
-                        :bot_id, :update_id, :chat_id, :message_text, 'PROCESSING', NOW(), 0, NOW()
+                        :bot_id, :update_id, :chat_id, :message_text, 'PROCESSING', NOW(), 0, :owner_token, NOW()
                     )
                     ON CONFLICT (bot_id, update_id) DO UPDATE
                     SET locked_at = NOW(),
                         retry_count = telegram_inbox.retry_count + 1,
+                        owner_token = :owner_token,
                         status = 'PROCESSING'
                     WHERE telegram_inbox.status = 'FAILED'
-                       OR (telegram_inbox.status = 'PROCESSING' AND telegram_inbox.locked_at < NOW() - INTERVAL '30 seconds')
+                       OR (telegram_inbox.status = 'PROCESSING' AND telegram_inbox.locked_at < NOW() - make_interval(secs => :lease_seconds))
                     RETURNING id, status;
                 """), {
                     "bot_id": bot_id,
                     "update_id": update_id,
                     "chat_id": chat_id,
-                    "message_text": text_content
+                    "message_text": text_content,
+                    "owner_token": owner_token,
+                    "lease_seconds": self.lease_timeout_seconds,
                 }).fetchone()
 
                 db.commit()
 
                 if claim_res:
+                    self._owners[event_key] = owner_token
                     logger.info(f"[IDEMPOTENCY-DB] Claimed processing lease for update {update_id} (row {claim_res[0]}).")
                     return True, None
 
@@ -226,13 +240,67 @@ class TelegramIdempotencyManager:
 
         return True, None
 
+    def get_owner_token(self, event_key: str) -> Optional[str]:
+        return self._owners.get(event_key)
+
+    async def renew_processing(self, event_key: str, db: Session, update_data: Dict[str, Any], bot_id: str = "rentkom_bot", owner_token: Optional[str] = None) -> bool:
+        """Renew an active lease only while the caller still owns it."""
+        token = owner_token or self._owners.get(event_key)
+        if not token:
+            return False
+        update_id, _, _ = self.parse_update_id(update_data)
+        result = db.execute(text("""
+            UPDATE public.telegram_inbox SET locked_at = NOW()
+            WHERE bot_id = :bot_id AND update_id = :update_id
+              AND status = 'PROCESSING' AND owner_token = :owner_token
+        """), {"bot_id": bot_id, "update_id": update_id, "owner_token": token})
+        db.commit()
+        return result.rowcount == 1
+
+    def start_renewal(self, event_key: str, update_data: Dict[str, Any], bot_id: str = "rentkom_bot") -> None:
+        """Keep a PostgreSQL lease alive until completion or ownership loss."""
+        if event_key in self._renewal_tasks:
+            return
+        owner_token = self._owners.get(event_key)
+        if not owner_token:
+            return
+
+        async def _heartbeat() -> None:
+            from core.database import SessionLocal
+            try:
+                while True:
+                    await asyncio.sleep(max(1, self.lease_timeout_seconds // 3))
+                    db = SessionLocal()
+                    try:
+                        if not await self.renew_processing(event_key, db, update_data, bot_id, owner_token):
+                            logger.warning(f"[IDEMPOTENCY-DB] Lease renewal stopped after ownership loss for {event_key}.")
+                            return
+                    except Exception as exc:
+                        db.rollback()
+                        logger.error(f"[IDEMPOTENCY-DB] Lease renewal failed for {event_key}: {exc}")
+                        return
+                    finally:
+                        db.close()
+            except asyncio.CancelledError:
+                return
+            finally:
+                self._renewal_tasks.pop(event_key, None)
+
+        self._renewal_tasks[event_key] = asyncio.create_task(_heartbeat())
+
+    def stop_renewal(self, event_key: str) -> None:
+        task = self._renewal_tasks.pop(event_key, None)
+        if task and not task.done():
+            task.cancel()
+
     async def finish_processing(
         self,
         event_key: str,
         response: CachedResponse,
         db: Optional[Session] = None,
         update_data: Optional[Dict[str, Any]] = None,
-        bot_id: str = "rentkom_bot"
+        bot_id: str = "rentkom_bot",
+        owner_token: Optional[str] = None,
     ):
         """Records the completed response in PostgreSQL inbox and memory cache, unblocking parallel tasks."""
         # 1. Update DB inbox
@@ -247,23 +315,32 @@ class TelegramIdempotencyManager:
                         .first()
                     )
                     if row is not None:
+                        token = owner_token or self._owners.get(event_key)
+                        if token and row.owner_token != token:
+                            return False
                         row.status = "COMPLETED"
                         row.response_payload = response.model_dump()
                         row.completed_at = datetime.now(timezone.utc)
                         db.commit()
                 else:
-                    db.execute(text("""
+                    token = owner_token or self._owners.get(event_key)
+                    result = db.execute(text("""
                         UPDATE public.telegram_inbox
                         SET status = 'COMPLETED',
                             response_payload = CAST(:payload AS jsonb),
                             completed_at = NOW()
-                        WHERE bot_id = :bot_id AND update_id = :update_id;
+                        WHERE bot_id = :bot_id AND update_id = :update_id
+                          AND status = 'PROCESSING' AND owner_token = :owner_token;
                     """), {
                         "payload": response.model_dump_json(),
                         "bot_id": bot_id,
-                        "update_id": update_id
+                        "update_id": update_id,
+                        "owner_token": token,
                     })
                     db.commit()
+                    if result.rowcount != 1:
+                        logger.warning(f"[IDEMPOTENCY-DB] Stale owner could not complete Telegram update {update_id}.")
+                        return False
                 logger.info(f"[IDEMPOTENCY-DB] Persisted COMPLETED state for Telegram update {update_id}.")
             except Exception as e:
                 logger.warning(f"[IDEMPOTENCY-DB] Failed to record completion in DB: {e}")
@@ -275,6 +352,9 @@ class TelegramIdempotencyManager:
             if event_key in self._in_progress:
                 event = self._in_progress.pop(event_key)
                 event.set()
+            self._owners.pop(event_key, None)
+        self.stop_renewal(event_key)
+        return True
 
     async def fail_processing(
         self,
@@ -282,7 +362,8 @@ class TelegramIdempotencyManager:
         error_message: str,
         db: Optional[Session] = None,
         update_data: Optional[Dict[str, Any]] = None,
-        bot_id: str = "rentkom_bot"
+        bot_id: str = "rentkom_bot",
+        owner_token: Optional[str] = None,
     ):
         """Marks processing as FAILED so lease can be retried."""
         if db is not None:
@@ -296,15 +377,22 @@ class TelegramIdempotencyManager:
                         .first()
                     )
                     if row is not None:
+                        token = owner_token or self._owners.get(event_key)
+                        if token and row.owner_token != token:
+                            return False
                         row.status = "FAILED"
                         db.commit()
                 else:
-                    db.execute(text("""
+                    token = owner_token or self._owners.get(event_key)
+                    result = db.execute(text("""
                         UPDATE public.telegram_inbox
                         SET status = 'FAILED'
-                        WHERE bot_id = :bot_id AND update_id = :update_id;
-                    """), {"bot_id": bot_id, "update_id": update_id})
+                        WHERE bot_id = :bot_id AND update_id = :update_id
+                          AND status = 'PROCESSING' AND owner_token = :owner_token;
+                    """), {"bot_id": bot_id, "update_id": update_id, "owner_token": token})
                     db.commit()
+                    if result.rowcount != 1:
+                        return False
             except Exception as e:
                 db.rollback()
 
@@ -312,12 +400,19 @@ class TelegramIdempotencyManager:
             if event_key in self._in_progress:
                 event = self._in_progress.pop(event_key)
                 event.set()
+            self._owners.pop(event_key, None)
+        self.stop_renewal(event_key)
+        return True
 
     async def clear_cache(self):
         """Used for test isolation."""
         async with self._lock:
             self._in_memory_cache.clear()
             self._in_progress.clear()
+            self._owners.clear()
+            for task in self._renewal_tasks.values():
+                task.cancel()
+            self._renewal_tasks.clear()
 
 # Global singleton
 telegram_idempotency = TelegramIdempotencyManager()

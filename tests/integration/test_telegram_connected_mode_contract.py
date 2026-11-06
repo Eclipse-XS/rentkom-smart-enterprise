@@ -333,16 +333,20 @@ def test_guard_response_contains_zero_secrets():
         )
         assert resp.status_code == 200
         data = resp.json()
-        # Strictly verify exact fields
+        # The short-lived lease capability is required for owner-validated completion.
+        # It is not a configured credential and is returned only on authenticated guard calls.
+        from uuid import UUID
         allowed_keys = {
             "action", "status", "update_id", "chat_id", "text", "is_test",
             "cached_response", "mode", "mode_action", "telegram_user_id",
             "callback_query_id", "callback_data", "message_id",
+            "owner_token",
         }
         assert set(data.keys()) == allowed_keys, f"Guard response leaked unexpected fields: {set(data.keys()) - allowed_keys}"
         assert "test_token" not in data
         assert "internal_token" not in data
         assert "token" not in data
+        assert str(UUID(data["owner_token"])) == data["owner_token"]
     finally:
         settings.ENVIRONMENT = orig_env
 

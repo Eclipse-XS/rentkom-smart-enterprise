@@ -123,6 +123,7 @@ class TelegramInbox(Base):
     locked_at = Column(DateTime, default=utc_now, server_default=func.now(), nullable=False)
     completed_at = Column(DateTime, nullable=True)
     retry_count = Column(Integer, default=0, nullable=False)
+    owner_token = Column(String(36), nullable=True, index=True)
     created_at = Column(DateTime, default=utc_now, server_default=func.now(), nullable=False)
 
     __table_args__ = (

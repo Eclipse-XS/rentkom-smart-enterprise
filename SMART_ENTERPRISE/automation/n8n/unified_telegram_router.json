@@ -568,7 +568,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { update_id: $('Acquire Telegram Inbox Guard').item.json.update_id, route: 'Executed', response_text: $json.result ? $json.result.text : ($json.response_text ? $json.response_text : ($json.answer ? $json.answer : 'OK')) } }}",
+        "jsonBody": "={{ { update_id: $('Acquire Telegram Inbox Guard').item.json.update_id, owner_token: $('Acquire Telegram Inbox Guard').item.json.owner_token, route: 'Executed', response_text: $json.result ? $json.result.text : ($json.response_text ? $json.response_text : ($json.answer ? $json.answer : 'OK')) } }}",
         "options": {
           "timeout": 15000
         },

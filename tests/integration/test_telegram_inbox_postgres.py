@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
 
 from core.main import app
+from core.config import settings
 from core.database import get_db, Base
 from core.services.telegram_idempotency import telegram_idempotency
 from tests.safety import assert_safe_test_database, ensure_test_schema_marker
@@ -73,7 +74,7 @@ def test_telegram_inbox_persists_across_restart(pg_session):
     }
 
     # 1. First execution
-    resp1 = client.post("/api/v1/telegram/webhook", json=payload)
+    resp1 = client.post("/api/v1/telegram/webhook", json=payload, headers={"X-Internal-Token": settings.INTERNAL_API_KEY})
     assert resp1.status_code == 200
     data1 = resp1.json()
     assert data1["route"] == "Start Menu"
@@ -94,7 +95,7 @@ def test_telegram_inbox_persists_across_restart(pg_session):
     telegram_idempotency._in_progress.clear()
 
     # 3. Duplicate delivery after restart
-    resp2 = client.post("/api/v1/telegram/webhook", json=payload)
+    resp2 = client.post("/api/v1/telegram/webhook", json=payload, headers={"X-Internal-Token": settings.INTERNAL_API_KEY})
     assert resp2.status_code == 200
     data2 = resp2.json()
     assert data2["is_duplicate"] is True
@@ -124,7 +125,7 @@ def test_telegram_inbox_lease_recovery_after_worker_crash(pg_session):
         "update_id": crashed_update_id,
         "message": {"text": "🏢 Процес купівлі/продажу", "chat": {"id": 999888}}
     }
-    resp = client.post("/api/v1/telegram/webhook", json=payload)
+    resp = client.post("/api/v1/telegram/webhook", json=payload, headers={"X-Internal-Token": settings.INTERNAL_API_KEY})
     assert resp.status_code == 200
     data = resp.json()
     assert data["route"] == "Купівля/Продаж"
