@@ -80,7 +80,11 @@ def test_user_resources_contain_exactly_two_public_actions(client):
         patch.object(settings, "LR3_FEEDBACK_FORM_URL", "https://forms.example/feedback"),
         patch.object(settings, "LR4_CONSULTATION_FORM_URL", "https://forms.example/consultation"),
         patch.object(settings, "LR3_SHEET_URL", "https://sheets.example/private-feedback"),
+        patch.object(settings, "LR4_SHEET_URL", "https://sheets.example/private-requests"),
         patch.object(settings, "GRAFANA_URL", "https://grafana.example/private"),
+        patch.object(settings, "N8N_URL", "https://n8n.example/private"),
+        patch.object(settings, "FASTAPI_DOCS_URL", "https://api.example/private-docs"),
+        patch.object(settings, "QDRANT_DASHBOARD_URL", "https://qdrant.example/private"),
     ):
         response = client.post(
             "/api/v1/telegram/mode/telegram-control",
@@ -95,8 +99,11 @@ def test_user_resources_contain_exactly_two_public_actions(client):
         [{"text": "Записатися на консультацію", "url": "https://forms.example/consultation"}],
     ]
     serialized = str(data)
-    assert "private-feedback" not in serialized
-    assert "grafana.example" not in serialized
+    for private_value in (
+        "private-feedback", "private-requests", "grafana.example", "n8n.example",
+        "private-docs", "qdrant.example",
+    ):
+        assert private_value not in serialized
 
 
 def test_admin_resources_extend_public_menu_without_local_url_buttons(client):
@@ -123,8 +130,83 @@ def test_admin_resources_extend_public_menu_without_local_url_buttons(client):
     buttons = [row[0] for row in data["reply_markup"]["inline_keyboard"]]
     assert [button["text"] for button in buttons] == [
         "Залишити відгук", "Записатися на консультацію",
-        "Відгуки (Google Sheets)", "Заявки (Google Sheets)", "FastAPI Swagger",
+        "Google Sheets: відгуки", "Google Sheets: заявки", "FastAPI Swagger",
     ]
+
+
+def test_admin_resources_include_all_configured_remote_actions(client):
+    configured = {
+        "LR3_FEEDBACK_FORM_URL": "https://forms.example/feedback",
+        "LR4_CONSULTATION_FORM_URL": "https://forms.example/consultation",
+        "LR3_SHEET_URL": "https://sheets.example/feedback",
+        "LR4_SHEET_URL": "https://sheets.example/requests",
+        "GRAFANA_URL": "https://grafana.example/admin",
+        "N8N_URL": "https://n8n.example/admin",
+        "FASTAPI_DOCS_URL": "https://api.example/docs",
+        "QDRANT_DASHBOARD_URL": "https://qdrant.example/dashboard",
+    }
+    patches = [patch.object(settings, key, value) for key, value in configured.items()]
+    for active_patch in patches:
+        active_patch.start()
+    try:
+        response = client.post(
+            "/api/v1/telegram/mode/telegram-control",
+            json=_payload("SHOW_RESOURCES"), headers=_headers(),
+        )
+    finally:
+        for active_patch in reversed(patches):
+            active_patch.stop()
+
+    data = response.json()
+    assert data["authorized"] is True
+    buttons = [row[0] for row in data["reply_markup"]["inline_keyboard"]]
+    assert [button["text"] for button in buttons] == [
+        "Залишити відгук",
+        "Записатися на консультацію",
+        "Google Sheets: відгуки",
+        "Google Sheets: заявки",
+        "Grafana",
+        "n8n",
+        "FastAPI Swagger",
+        "Qdrant Dashboard",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("user_id", "chat_id", "chat_type"),
+    [
+        (111, 111, "private"),
+        (None, 111, "private"),
+        (111, None, "private"),
+        (None, None, "group"),
+    ],
+)
+def test_resources_never_expose_admin_urls_to_unauthorized_identity(
+    client, user_id, chat_id, chat_type,
+):
+    admin_user = int(settings.TELEGRAM_ADMIN_USER_ID)
+    admin_chat = int(settings.TELEGRAM_ADMIN_CHAT_ID)
+    payload = _payload(
+        "SHOW_RESOURCES",
+        user_id=admin_user if user_id is None else user_id,
+        chat_id=admin_chat if chat_id is None else chat_id,
+    )
+    payload["chat_type"] = chat_type
+    with (
+        patch.object(settings, "LR3_SHEET_URL", "https://admin.example/feedback"),
+        patch.object(settings, "LR4_SHEET_URL", "https://admin.example/requests"),
+        patch.object(settings, "GRAFANA_URL", "https://admin.example/grafana"),
+        patch.object(settings, "N8N_URL", "https://admin.example/n8n"),
+        patch.object(settings, "FASTAPI_DOCS_URL", "https://admin.example/docs"),
+        patch.object(settings, "QDRANT_DASHBOARD_URL", "https://admin.example/qdrant"),
+    ):
+        response = client.post(
+            "/api/v1/telegram/mode/telegram-control", json=payload, headers=_headers(),
+        )
+    data = response.json()
+    assert data["authorized"] is False
+    assert len(data["reply_markup"]["inline_keyboard"]) == 2
+    assert "admin.example" not in str(data)
 
 
 def test_missing_public_resource_is_a_message_not_broken_button(client):

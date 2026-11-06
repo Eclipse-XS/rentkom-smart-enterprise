@@ -194,8 +194,8 @@ def build_resources_menu(is_admin: bool) -> tuple[str, Dict[str, Any]]:
     if is_admin:
         lines.extend(["", "Дані та аналітика"])
         data_resources = (
-            ("Відгуки (Google Sheets)", settings.LR3_SHEET_URL),
-            ("Заявки (Google Sheets)", settings.LR4_SHEET_URL),
+            ("Google Sheets: відгуки", settings.LR3_SHEET_URL),
+            ("Google Sheets: заявки", settings.LR4_SHEET_URL),
         )
         missing_admin = []
         for label, configured_url in data_resources:
