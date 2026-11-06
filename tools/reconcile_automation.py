@@ -72,7 +72,7 @@ def get_n8n_workflows_state():
 
 def reconcile_workflows(manifest):
     print("=== Step 1: Reconciling Credentials & Workflows from Manifest ===")
-    
+
     # 1. Bootstrap credentials
     from scripts.bootstrap_n8n_credentials import bootstrap_credentials
     cred_ok = bootstrap_credentials()
@@ -219,7 +219,7 @@ def run_smoke_tests(manifest):
 
 def evaluate_business_capabilities(manifest, test_results):
     print("\n=== Step 3: Enterprise Business Capabilities Evaluation ===")
-    
+
     # 1. Telegram Automation (LR2 + LR6)
     tg_test = test_results.get("RentkomTelegramUnified01", {})
     tg_has_token = bool(os.getenv("TELEGRAM_BOT_TOKEN", "").strip())
