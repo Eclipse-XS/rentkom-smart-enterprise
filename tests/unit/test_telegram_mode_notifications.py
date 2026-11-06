@@ -121,6 +121,7 @@ def _mode_control_payload(action, callback_data=None, user_id=None):
         "action": action,
         "chat_id": int(settings.TELEGRAM_ADMIN_CHAT_ID),
         "telegram_user_id": user_id if user_id is not None else admin_id,
+        "chat_type": "private",
         "callback_query_id": "callback-1" if action == "SELECT_MODE" else None,
         "callback_data": callback_data,
         "is_test": False,
@@ -131,10 +132,10 @@ def test_single_mode_command_sends_inline_selector(client):
     async def telegram_result(method, payload):
         assert method == "sendMessage"
         assert payload["reply_markup"]["inline_keyboard"][0][0] == {
-            "text": "ЛР2 — Сценарний бот", "callback_data": "mode:LR2"
+            "text": "Сценарний режим (LR2)", "callback_data": "mode:LR2"
         }
         assert payload["reply_markup"]["inline_keyboard"][0][1] == {
-            "text": "ЛР6 — AI-асистент", "callback_data": "mode:LR6"
+            "text": "AI-консультант (LR6)", "callback_data": "mode:LR6"
         }
         return {"ok": True, "result": {"message_id": 501}}
 

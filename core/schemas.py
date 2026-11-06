@@ -179,12 +179,14 @@ class TelegramInboxGuardResponse(BaseModel):
     callback_query_id: Optional[str] = None
     callback_data: Optional[str] = None
     message_id: Optional[int] = None
+    chat_type: Optional[str] = None
     owner_token: Optional[str] = None
 
 class TelegramModeControlRequest(BaseModel):
     action: str
     chat_id: int
     telegram_user_id: int
+    chat_type: Optional[str] = None
     callback_query_id: Optional[str] = None
     callback_data: Optional[str] = None
     message_id: Optional[int] = None

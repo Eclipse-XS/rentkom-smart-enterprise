@@ -173,7 +173,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { action: $json.mode_action, chat_id: $json.chat_id, telegram_user_id: $json.telegram_user_id, callback_query_id: $json.callback_query_id, callback_data: $json.callback_data, message_id: $json.message_id, is_test: $json.is_test } }}",
+        "jsonBody": "={{ { action: $json.mode_action, chat_id: $json.chat_id, telegram_user_id: $json.telegram_user_id, chat_type: $json.chat_type, callback_query_id: $json.callback_query_id, callback_data: $json.callback_data, message_id: $json.message_id, is_test: $json.is_test } }}",
         "options": {
           "timeout": 15000
         },

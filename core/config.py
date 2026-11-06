@@ -61,6 +61,12 @@ class Settings(BaseSettings):
         "LR4_CONSULTATION_FORM_URL",
         "https://docs.google.com/forms/d/e/1FAIpQLScjfHylsJMnU9nmxP9XCoiZx1HPIWGqUydvBMteWDxuJcgQGw/viewform",
     )
+    LR3_SHEET_URL: Optional[str] = os.getenv("LR3_SHEET_URL", None)
+    LR4_SHEET_URL: Optional[str] = os.getenv("LR4_SHEET_URL", None)
+    GRAFANA_URL: Optional[str] = os.getenv("GRAFANA_URL", None)
+    N8N_URL: Optional[str] = os.getenv("N8N_URL", None)
+    FASTAPI_DOCS_URL: Optional[str] = os.getenv("FASTAPI_DOCS_URL", None)
+    QDRANT_DASHBOARD_URL: Optional[str] = os.getenv("QDRANT_DASHBOARD_URL", None)
     ALLOW_TEST_WEBHOOK: bool = os.getenv("ALLOW_TEST_WEBHOOK", "true").lower() in ("true", "1", "yes")
 
     # Agency Contact & Support Settings (Configurable fallbacks)

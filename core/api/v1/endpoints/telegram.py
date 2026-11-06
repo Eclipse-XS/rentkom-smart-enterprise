@@ -79,17 +79,23 @@ LR6_REPLY_KEYBOARD_REMOVE = {"remove_keyboard": True}
 MODE_SELECTOR_TEXT = "Оберіть режим роботи Telegram-бота:"
 MODE_SELECTOR_KEYBOARD = {
     "inline_keyboard": [[
-        {"text": "ЛР2 — Сценарний бот", "callback_data": "mode:LR2"},
-        {"text": "ЛР6 — AI-асистент", "callback_data": "mode:LR6"},
+        {"text": "Сценарний режим (LR2)", "callback_data": "mode:LR2"},
+        {"text": "AI-консультант (LR6)", "callback_data": "mode:LR6"},
     ]]
 }
 LR3_NOTIFICATIONS_KEY = "lr3_telegram_notifications_enabled"
 NOTIFICATIONS_KEYBOARD = {
     "inline_keyboard": [[
-        {"text": "Увімкнути", "callback_data": "notifications:ON"},
-        {"text": "Вимкнути", "callback_data": "notifications:OFF"},
+        {"text": "Увімкнути сповіщення", "callback_data": "notifications:ON"},
+        {"text": "Вимкнути сповіщення", "callback_data": "notifications:OFF"},
     ]]
 }
+ADMIN_KEYBOARD = {"inline_keyboard": [
+    [{"text": "Режим бота", "callback_data": "admin:mode"}],
+    [{"text": "Сповіщення", "callback_data": "admin:notifications"}],
+    [{"text": "Ресурси", "callback_data": "admin:resources"}],
+    [{"text": "Оновити стан", "callback_data": "admin:refresh"}],
+]}
 MODE_NOTIFICATION_TEXT = {
     "LR2": (
         "🔄 Режим переключено на ЛР2: Сценарний чат-бот агентства «Рентком».\n\n"
@@ -139,6 +145,33 @@ def notifications_status_text(enabled: bool) -> str:
     return f"Сповіщення ЛР3: {'увімкнено' if enabled else 'вимкнено'}."
 
 
+def admin_panel_text(db: Session) -> str:
+    return (
+        "Rentkom — Адміністрування\n\n"
+        f"Поточний глобальний режим: {get_telegram_bot_mode(db)}\n"
+        f"Сповіщення адміністратора: {'ON' if get_lr3_notifications_enabled(db) else 'OFF'}"
+    )
+
+
+def resources_text() -> str:
+    resources = (
+        ("LR3 Google Sheets", settings.LR3_SHEET_URL),
+        ("LR4 Google Sheets", settings.LR4_SHEET_URL),
+        ("Grafana", settings.GRAFANA_URL),
+        ("n8n", settings.N8N_URL),
+        ("FastAPI Swagger", settings.FASTAPI_DOCS_URL),
+        ("Qdrant Dashboard", settings.QDRANT_DASHBOARD_URL),
+    )
+    lines = ["Rentkom — Ресурси"]
+    for label, url in resources:
+        if not url:
+            lines.append(f"{label}: NOT CONFIGURED")
+            continue
+        local = " — LOCAL ONLY" if any(marker in url.lower() for marker in ("127.0.0.1", "localhost")) else ""
+        lines.append(f"{label}: {url}{local}")
+    return "\n".join(lines)
+
+
 async def send_mode_notification(chat_id: int, mode: str) -> Optional[int]:
     """Deliver the post-commit mode confirmation to exactly one configured chat."""
     if not settings.TELEGRAM_BOT_TOKEN:
@@ -173,7 +206,7 @@ async def _telegram_api(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return body
 
 
-def _is_authorized_telegram_admin(user_id: int, chat_id: int) -> bool:
+def _is_authorized_telegram_admin(user_id: int, chat_id: int, chat_type: Optional[str] = None) -> bool:
     admin_user_id = getattr(settings, "TELEGRAM_ADMIN_USER_ID", None)
     admin_chat_id = getattr(settings, "TELEGRAM_ADMIN_CHAT_ID", None)
     return bool(
@@ -181,6 +214,7 @@ def _is_authorized_telegram_admin(user_id: int, chat_id: int) -> bool:
         and admin_chat_id
         and str(user_id) == str(admin_user_id)
         and str(chat_id) == str(admin_chat_id)
+        and (chat_type is None or chat_type == "private")
     )
 
 
@@ -197,7 +231,10 @@ async def telegram_mode_control(
     if not (internal_key and token and constant_time_equals(token, internal_key)):
         raise HTTPException(status_code=403, detail="Forbidden: requires valid internal token")
 
-    authorized = _is_authorized_telegram_admin(req.telegram_user_id, req.chat_id)
+    authorized = bool(
+        req.chat_type == "private"
+        and _is_authorized_telegram_admin(req.telegram_user_id, req.chat_id, req.chat_type)
+    )
     callback_answered = False
 
     public_form_actions = {
@@ -247,6 +284,40 @@ async def telegram_mode_control(
             status="SELECTOR_SENT", action=req.action, mode=get_telegram_bot_mode(db),
             authorized=True, notification_message_id=message_id,
             response_text=MODE_SELECTOR_TEXT,
+        )
+
+    if req.action in ("SHOW_ADMIN", "REFRESH_ADMIN"):
+        text = admin_panel_text(db)
+        if req.is_test:
+            message_id = req.message_id
+        elif req.action == "REFRESH_ADMIN" and req.message_id:
+            await _telegram_api("editMessageText", {
+                "chat_id": req.chat_id, "message_id": req.message_id,
+                "text": text, "reply_markup": ADMIN_KEYBOARD,
+            })
+            message_id = req.message_id
+        else:
+            sent = await _telegram_api("sendMessage", {
+                "chat_id": req.chat_id, "text": text, "reply_markup": ADMIN_KEYBOARD,
+            })
+            message_id = (sent.get("result") or {}).get("message_id")
+        return TelegramModeControlResponse(
+            status="ADMIN_PANEL_SENT", action=req.action, mode=get_telegram_bot_mode(db),
+            authorized=True, callback_answered=callback_answered,
+            notification_message_id=message_id, response_text=text,
+        )
+
+    if req.action == "SHOW_RESOURCES":
+        text = resources_text()
+        if req.is_test:
+            message_id = None
+        else:
+            sent = await _telegram_api("sendMessage", {"chat_id": req.chat_id, "text": text})
+            message_id = (sent.get("result") or {}).get("message_id")
+        return TelegramModeControlResponse(
+            status="RESOURCES_SENT", action=req.action, authorized=True,
+            callback_answered=callback_answered, notification_message_id=message_id,
+            response_text=text,
         )
 
     if req.action == "DEPRECATED_COMMAND":
@@ -488,18 +559,30 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
         chat_id_val = message.get("chat", {}).get("id") or 0
         user_id_val = message.get("from", {}).get("id") or 0
         is_admin_update = _is_authorized_telegram_admin(user_id_val, chat_id_val)
-        if is_admin_update and text_content.lower().startswith("/mode"):
-            if text_content.lower() == "/mode":
+        admin_command = text_content.lower()
+        if admin_command in ("/admin", "/mode", "/notifications", "/resources"):
+            if not is_admin_update:
+                res = TelegramResponseMock(route="Access Denied", response_text="Недостатньо прав.")
+            elif admin_command == "/admin":
+                res = TelegramResponseMock(route="Admin Panel", response_text=admin_panel_text(db), reply_markup=ADMIN_KEYBOARD)
+            elif admin_command == "/mode":
                 res = TelegramResponseMock(
                     route="Admin Mode Selector",
                     response_text=MODE_SELECTOR_TEXT,
                     reply_markup=MODE_SELECTOR_KEYBOARD,
                 )
-            else:
+            elif admin_command == "/notifications":
                 res = TelegramResponseMock(
-                    route="Deprecated Admin Command",
-                    response_text="Команди /mode lr2 та /mode lr6 застаріли. Використовуйте /mode.",
+                    route="Admin Notifications", response_text=notifications_status_text(get_lr3_notifications_enabled(db)),
+                    reply_markup=NOTIFICATIONS_KEYBOARD,
                 )
+            else:
+                res = TelegramResponseMock(route="Admin Resources", response_text=resources_text())
+        elif admin_command.startswith("/mode"):
+            res = TelegramResponseMock(
+                route="Deprecated Admin Command" if is_admin_update else "Access Denied",
+                response_text="Команди /mode lr2 та /mode lr6 застаріли. Використовуйте /mode." if is_admin_update else "Недостатньо прав.",
+            )
         elif active_mode == "LR2":
             # PURE LR2 EXECUTION MODE
             if text_content.lower() == "/start":
@@ -709,6 +792,7 @@ async def acquire_telegram_inbox_guard(
     callback_query_id = callback.get("id")
     callback_data = callback.get("data")
     message_id = msg.get("message_id")
+    chat_type = (msg.get("chat") or {}).get("type")
     normalized_text = text_content.strip().lower()
     if callback_data in ("mode:LR2", "mode:LR6"):
         mode_action = "SELECT_MODE"
@@ -716,8 +800,20 @@ async def acquire_telegram_inbox_guard(
         mode_action = "SET_NOTIFICATIONS"
     elif normalized_text == "/mode":
         mode_action = "SHOW_SELECTOR"
+    elif normalized_text == "/admin":
+        mode_action = "SHOW_ADMIN"
+    elif callback_data == "admin:refresh":
+        mode_action = "REFRESH_ADMIN"
+    elif callback_data == "admin:mode":
+        mode_action = "SHOW_SELECTOR"
+    elif callback_data == "admin:notifications":
+        mode_action = "SHOW_NOTIFICATIONS"
+    elif callback_data == "admin:resources":
+        mode_action = "SHOW_RESOURCES"
     elif normalized_text == "/notifications":
         mode_action = "SHOW_NOTIFICATIONS"
+    elif normalized_text == "/resources":
+        mode_action = "SHOW_RESOURCES"
     elif normalized_text == "/consultation":
         mode_action = "SHOW_CONSULTATION_FORM"
     elif normalized_text == "/feedback":
@@ -775,6 +871,7 @@ async def acquire_telegram_inbox_guard(
         callback_query_id=callback_query_id,
         callback_data=callback_data,
         message_id=message_id,
+        chat_type=chat_type,
         owner_token=telegram_idempotency.get_owner_token(event_key),
     )
 
@@ -839,7 +936,7 @@ async def complete_telegram_inbox(
         processed_at=time.time(),
         is_duplicate=False
     )
-    await telegram_idempotency.finish_processing(
+    completed = await telegram_idempotency.finish_processing(
         event_key,
         cached,
         db=db,
@@ -847,6 +944,8 @@ async def complete_telegram_inbox(
         bot_id=req.bot_id,
         owner_token=req.owner_token,
     )
+    if not completed:
+        raise HTTPException(status_code=409, detail="Processing lease ownership was lost.")
     return {"status": "SUCCESS", "update_id": req.update_id}
 
 

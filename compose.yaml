@@ -81,6 +81,12 @@ services:
       TELEGRAM_SECRET_TOKEN: ${TELEGRAM_SECRET_TOKEN:-}
       TELEGRAM_ADMIN_CHAT_ID: ${TELEGRAM_ADMIN_CHAT_ID:-}
       TELEGRAM_ADMIN_USER_ID: ${TELEGRAM_ADMIN_USER_ID:-}
+      LR3_SHEET_URL: ${LR3_SHEET_URL:-https://docs.google.com/spreadsheets/d/1HKEQsxQF0g_bTK3Bp0oOgQ-ctMKzLoKMPeHbX2F42EQ/edit}
+      LR4_SHEET_URL: ${LR4_SHEET_URL:-https://docs.google.com/spreadsheets/d/19yHm6hi7G2b8s3y8pFVSoCn8m3HiWJDlFr_CdXMnoUg/edit}
+      GRAFANA_URL: ${GRAFANA_URL:-http://127.0.0.1:3000}
+      N8N_URL: ${N8N_URL:-http://127.0.0.1:5678}
+      FASTAPI_DOCS_URL: ${FASTAPI_DOCS_URL:-http://127.0.0.1:8000/docs}
+      QDRANT_DASHBOARD_URL: ${QDRANT_DASHBOARD_URL:-http://127.0.0.1:6333/dashboard}
       RUN_OUTBOX_WORKER_IN_LIFESPAN: ${RUN_OUTBOX_WORKER_IN_LIFESPAN:-true}
     ports:
       - "${API_BIND_IP:-127.0.0.1}:${API_PORT:-8000}:8000"

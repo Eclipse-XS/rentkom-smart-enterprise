@@ -322,6 +322,8 @@ class TelegramIdempotencyManager:
                         row.response_payload = response.model_dump()
                         row.completed_at = datetime.now(timezone.utc)
                         db.commit()
+                    else:
+                        return False
                 else:
                     token = owner_token or self._owners.get(event_key)
                     result = db.execute(text("""
@@ -345,6 +347,7 @@ class TelegramIdempotencyManager:
             except Exception as e:
                 logger.warning(f"[IDEMPOTENCY-DB] Failed to record completion in DB: {e}")
                 db.rollback()
+                return False
 
         # 2. Update memory cache and unblock events
         async with self._lock:

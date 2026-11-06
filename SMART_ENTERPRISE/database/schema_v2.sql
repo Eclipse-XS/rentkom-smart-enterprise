@@ -206,6 +206,10 @@ INSERT INTO public.system_config (key, value)
 VALUES ('telegram_bot_mode', 'LR2')
 ON CONFLICT (key) DO NOTHING;
 
+INSERT INTO public.system_config (key, value)
+VALUES ('lr3_telegram_notifications_enabled', 'false')
+ON CONFLICT (key) DO NOTHING;
+
 -- 9. Data Migration & Compatibility Bridge
 -- If legacy physical table real_estate_requests exists, migrate rows into customers and service_requests,
 -- then rename the legacy table so the backward-compatibility VIEW can be created without relation collision.
