@@ -22,7 +22,7 @@ def _payload(action, user_id=None, chat_id=None, **extra):
     }
 
 
-@pytest.mark.parametrize("action", ["SHOW_ADMIN", "SHOW_SELECTOR", "SHOW_NOTIFICATIONS", "SHOW_RESOURCES"])
+@pytest.mark.parametrize("action", ["SHOW_ADMIN", "SHOW_SELECTOR", "SHOW_NOTIFICATIONS"])
 def test_user_cannot_execute_admin_actions(client, action):
     response = client.post(
         "/api/v1/telegram/mode/telegram-control",
@@ -75,21 +75,73 @@ def test_admin_panel_reports_global_state(client, db_session):
     assert "Сповіщення адміністратора: ON" in response.json()["response_text"]
 
 
-def test_resources_hide_secrets_and_mark_missing_and_local(client):
-    with patch.object(settings, "LR3_SHEET_URL", None), patch.object(settings, "GRAFANA_URL", "http://127.0.0.1:3000"):
+def test_user_resources_contain_exactly_two_public_actions(client):
+    with (
+        patch.object(settings, "LR3_FEEDBACK_FORM_URL", "https://forms.example/feedback"),
+        patch.object(settings, "LR4_CONSULTATION_FORM_URL", "https://forms.example/consultation"),
+        patch.object(settings, "LR3_SHEET_URL", "https://sheets.example/private-feedback"),
+        patch.object(settings, "GRAFANA_URL", "https://grafana.example/private"),
+    ):
+        response = client.post(
+            "/api/v1/telegram/mode/telegram-control",
+            json=_payload("SHOW_RESOURCES", user_id=111, chat_id=111), headers=_headers(),
+        )
+    data = response.json()
+    assert data["status"] == "RESOURCES_SENT"
+    assert data["authorized"] is False
+    assert data["response_text"] == "Rentkom | Корисні посилання"
+    assert data["reply_markup"]["inline_keyboard"] == [
+        [{"text": "Залишити відгук", "url": "https://forms.example/feedback"}],
+        [{"text": "Записатися на консультацію", "url": "https://forms.example/consultation"}],
+    ]
+    serialized = str(data)
+    assert "private-feedback" not in serialized
+    assert "grafana.example" not in serialized
+
+
+def test_admin_resources_extend_public_menu_without_local_url_buttons(client):
+    with (
+        patch.object(settings, "LR3_FEEDBACK_FORM_URL", "https://forms.example/feedback"),
+        patch.object(settings, "LR4_CONSULTATION_FORM_URL", "https://forms.example/consultation"),
+        patch.object(settings, "LR3_SHEET_URL", "https://sheets.example/feedback"),
+        patch.object(settings, "LR4_SHEET_URL", "https://sheets.example/requests"),
+        patch.object(settings, "GRAFANA_URL", "http://127.0.0.1:3000"),
+        patch.object(settings, "N8N_URL", "http://localhost:5678"),
+        patch.object(settings, "FASTAPI_DOCS_URL", "https://api.example/docs"),
+        patch.object(settings, "QDRANT_DASHBOARD_URL", None),
+    ):
         response = client.post(
             "/api/v1/telegram/mode/telegram-control", json=_payload("SHOW_RESOURCES"), headers=_headers(),
         )
-    text = response.json()["response_text"]
-    assert "LR3 Google Sheets: NOT CONFIGURED" in text
-    assert "Grafana: http://127.0.0.1:3000 — LOCAL ONLY" in text
-    assert settings.INTERNAL_API_KEY not in text
-    assert "TELEGRAM_BOT_TOKEN" not in text
-    if settings.TELEGRAM_BOT_TOKEN:
-        assert settings.TELEGRAM_BOT_TOKEN not in text
+    data = response.json()
+    assert data["authorized"] is True
+    assert "Дані та аналітика" in data["response_text"]
+    assert "Інфраструктура" in data["response_text"]
+    assert "Локальний доступ: Grafana, n8n." in data["response_text"]
+    assert "127.0.0.1" not in str(data)
+    assert "localhost" not in str(data)
+    buttons = [row[0] for row in data["reply_markup"]["inline_keyboard"]]
+    assert [button["text"] for button in buttons] == [
+        "Залишити відгук", "Записатися на консультацію",
+        "Відгуки (Google Sheets)", "Заявки (Google Sheets)", "FastAPI Swagger",
+    ]
 
 
-@pytest.mark.parametrize("command", ["/admin", "/mode", "/notifications", "/resources"])
+def test_missing_public_resource_is_a_message_not_broken_button(client):
+    with (
+        patch.object(settings, "LR3_FEEDBACK_FORM_URL", ""),
+        patch.object(settings, "LR4_CONSULTATION_FORM_URL", "https://forms.example/consultation"),
+    ):
+        response = client.post(
+            "/api/v1/telegram/mode/telegram-control",
+            json=_payload("SHOW_RESOURCES", user_id=111, chat_id=111), headers=_headers(),
+        )
+    data = response.json()
+    assert "Недоступно: Залишити відгук." in data["response_text"]
+    assert len(data["reply_markup"]["inline_keyboard"]) == 1
+
+
+@pytest.mark.parametrize("command", ["/admin", "/mode", "/notifications"])
 def test_mock_router_denies_user_admin_commands(client, command):
     response = client.post(
         "/api/v1/telegram/webhook-mock",
@@ -97,6 +149,16 @@ def test_mock_router_denies_user_admin_commands(client, command):
     )
     assert response.status_code == 200
     assert response.json()["route"] == "Access Denied"
+
+
+def test_mock_router_user_resources_are_public_only(client):
+    response = client.post(
+        "/api/v1/telegram/webhook-mock",
+        json={"update_id": 799991, "message": {"chat": {"id": 111, "type": "private"}, "from": {"id": 111}, "text": "/resources"}},
+    )
+    assert response.status_code == 200
+    assert response.json()["route"] == "Resources"
+    assert len(response.json()["reply_markup"]["inline_keyboard"]) == 2
 
 
 def test_admin_identity_requires_both_user_and_private_chat(client):

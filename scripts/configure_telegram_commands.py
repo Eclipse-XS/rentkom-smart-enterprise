@@ -9,13 +9,13 @@ USER_COMMANDS = [
     {"command": "start", "description": "Почати роботу"},
     {"command": "feedback", "description": "Залишити відгук"},
     {"command": "consultation", "description": "Записатися на консультацію"},
+    {"command": "resources", "description": "Корисні посилання"},
 ]
 
 ADMIN_COMMANDS = USER_COMMANDS + [
     {"command": "admin", "description": "Панель адміністратора"},
     {"command": "mode", "description": "Режим бота"},
     {"command": "notifications", "description": "Сповіщення"},
-    {"command": "resources", "description": "Ресурси"},
 ]
 
 

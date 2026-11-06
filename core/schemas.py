@@ -201,6 +201,7 @@ class TelegramModeControlResponse(BaseModel):
     callback_answered: bool = False
     notification_message_id: Optional[int] = None
     response_text: Optional[str] = None
+    reply_markup: Optional[Dict[str, Any]] = None
 
 class TelegramModeRequest(BaseModel):
     mode: str

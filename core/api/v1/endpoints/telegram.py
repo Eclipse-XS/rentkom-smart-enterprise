@@ -30,6 +30,7 @@ from core.schemas import (
     TelegramModeControlResponse,
 )
 import os
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -153,23 +154,82 @@ def admin_panel_text(db: Session) -> str:
     )
 
 
-def resources_text() -> str:
-    resources = (
-        ("LR3 Google Sheets", settings.LR3_SHEET_URL),
-        ("LR4 Google Sheets", settings.LR4_SHEET_URL),
-        ("Grafana", settings.GRAFANA_URL),
-        ("n8n", settings.N8N_URL),
-        ("FastAPI Swagger", settings.FASTAPI_DOCS_URL),
-        ("Qdrant Dashboard", settings.QDRANT_DASHBOARD_URL),
+def _safe_resource_url(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        parsed = urlparse(value.strip())
+    except ValueError:
+        return None
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+    if parsed.username or parsed.password:
+        return None
+    return value.strip()
+
+
+def _is_local_resource(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return host in ("127.0.0.1", "localhost", "::1")
+
+
+def build_resources_menu(is_admin: bool) -> tuple[str, Dict[str, Any]]:
+    rows = []
+    unavailable = []
+    public_resources = (
+        ("Залишити відгук", settings.LR3_FEEDBACK_FORM_URL),
+        ("Записатися на консультацію", settings.LR4_CONSULTATION_FORM_URL),
     )
-    lines = ["Rentkom — Ресурси"]
-    for label, url in resources:
-        if not url:
-            lines.append(f"{label}: NOT CONFIGURED")
-            continue
-        local = " — LOCAL ONLY" if any(marker in url.lower() for marker in ("127.0.0.1", "localhost")) else ""
-        lines.append(f"{label}: {url}{local}")
-    return "\n".join(lines)
+    for label, configured_url in public_resources:
+        url = _safe_resource_url(configured_url)
+        if url:
+            rows.append([{"text": label, "url": url}])
+        else:
+            unavailable.append(label)
+
+    lines = ["Rentkom | Корисні посилання"]
+    if unavailable:
+        lines.append("Недоступно: " + ", ".join(unavailable) + ".")
+
+    if is_admin:
+        lines.extend(["", "Дані та аналітика"])
+        data_resources = (
+            ("Відгуки (Google Sheets)", settings.LR3_SHEET_URL),
+            ("Заявки (Google Sheets)", settings.LR4_SHEET_URL),
+        )
+        missing_admin = []
+        for label, configured_url in data_resources:
+            url = _safe_resource_url(configured_url)
+            if url:
+                rows.append([{"text": label, "url": url}])
+            else:
+                missing_admin.append(label)
+        if missing_admin:
+            lines.append("Недоступно: " + ", ".join(missing_admin) + ".")
+
+        lines.extend(["", "Інфраструктура"])
+        infrastructure = (
+            ("Grafana", settings.GRAFANA_URL),
+            ("n8n", settings.N8N_URL),
+            ("FastAPI Swagger", settings.FASTAPI_DOCS_URL),
+            ("Qdrant Dashboard", settings.QDRANT_DASHBOARD_URL),
+        )
+        local_labels = []
+        unavailable_infrastructure = []
+        for label, configured_url in infrastructure:
+            url = _safe_resource_url(configured_url)
+            if not url:
+                unavailable_infrastructure.append(label)
+            elif _is_local_resource(url):
+                local_labels.append(label)
+            else:
+                rows.append([{"text": label, "url": url}])
+        if local_labels:
+            lines.append("Локальний доступ: " + ", ".join(local_labels) + ".")
+        if unavailable_infrastructure:
+            lines.append("Не налаштовано: " + ", ".join(unavailable_infrastructure) + ".")
+
+    return "\n".join(lines), {"inline_keyboard": rows}
 
 
 async def send_mode_notification(chat_id: int, mode: str) -> Optional[int]:
@@ -254,7 +314,7 @@ async def telegram_mode_control(
         )
 
     if req.callback_query_id and not req.is_test:
-        answer_text = None if authorized else "Недостатньо прав."
+        answer_text = None if (authorized or req.action == "SHOW_RESOURCES") else "Недостатньо прав."
         await _telegram_api(
             "answerCallbackQuery",
             {
@@ -263,6 +323,21 @@ async def telegram_mode_control(
             },
         )
         callback_answered = True
+
+    if req.action == "SHOW_RESOURCES":
+        text, reply_markup = build_resources_menu(authorized)
+        if req.is_test:
+            message_id = None
+        else:
+            sent = await _telegram_api("sendMessage", {
+                "chat_id": req.chat_id, "text": text, "reply_markup": reply_markup,
+            })
+            message_id = (sent.get("result") or {}).get("message_id")
+        return TelegramModeControlResponse(
+            status="RESOURCES_SENT", action=req.action, authorized=authorized,
+            callback_answered=callback_answered, notification_message_id=message_id,
+            response_text=text, reply_markup=reply_markup,
+        )
 
     if not authorized:
         return TelegramModeControlResponse(
@@ -305,19 +380,6 @@ async def telegram_mode_control(
             status="ADMIN_PANEL_SENT", action=req.action, mode=get_telegram_bot_mode(db),
             authorized=True, callback_answered=callback_answered,
             notification_message_id=message_id, response_text=text,
-        )
-
-    if req.action == "SHOW_RESOURCES":
-        text = resources_text()
-        if req.is_test:
-            message_id = None
-        else:
-            sent = await _telegram_api("sendMessage", {"chat_id": req.chat_id, "text": text})
-            message_id = (sent.get("result") or {}).get("message_id")
-        return TelegramModeControlResponse(
-            status="RESOURCES_SENT", action=req.action, authorized=True,
-            callback_answered=callback_answered, notification_message_id=message_id,
-            response_text=text,
         )
 
     if req.action == "DEPRECATED_COMMAND":
@@ -557,11 +619,15 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
 
         # Administrator mode selector is intercepted before LR2/LR6 business routing.
         chat_id_val = message.get("chat", {}).get("id") or 0
+        chat_type_val = message.get("chat", {}).get("type")
         user_id_val = message.get("from", {}).get("id") or 0
-        is_admin_update = _is_authorized_telegram_admin(user_id_val, chat_id_val)
+        is_admin_update = _is_authorized_telegram_admin(user_id_val, chat_id_val, chat_type_val)
         admin_command = text_content.lower()
         if admin_command in ("/admin", "/mode", "/notifications", "/resources"):
-            if not is_admin_update:
+            if admin_command == "/resources":
+                text, markup = build_resources_menu(is_admin_update)
+                res = TelegramResponseMock(route="Resources", response_text=text, reply_markup=markup)
+            elif not is_admin_update:
                 res = TelegramResponseMock(route="Access Denied", response_text="Недостатньо прав.")
             elif admin_command == "/admin":
                 res = TelegramResponseMock(route="Admin Panel", response_text=admin_panel_text(db), reply_markup=ADMIN_KEYBOARD)
@@ -576,8 +642,6 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
                     route="Admin Notifications", response_text=notifications_status_text(get_lr3_notifications_enabled(db)),
                     reply_markup=NOTIFICATIONS_KEYBOARD,
                 )
-            else:
-                res = TelegramResponseMock(route="Admin Resources", response_text=resources_text())
         elif admin_command.startswith("/mode"):
             res = TelegramResponseMock(
                 route="Deprecated Admin Command" if is_admin_update else "Access Denied",
