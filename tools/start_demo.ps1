@@ -130,24 +130,14 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "`n[5/6] Managing Cloudflare Development Tunnel & Telegram Webhook..." -ForegroundColor Yellow
 $tunnelStatus = & $PythonExe "$ProjectRoot\tools\manage_tunnel.py" --action status 2>&1
 if ($LASTEXITCODE -ne 0) {
-    $existingState = $null
-    $statePath = "$ProjectRoot\runtime\tunnel_state.json"
-    if (Test-Path $statePath) {
-        try { $existingState = Get-Content $statePath -Raw | ConvertFrom-Json } catch {}
-    }
-    $supervisorAlive = $false
-    if ($existingState -and $existingState.supervisor_pid) {
-        $supervisorAlive = [bool](Get-Process -Id $existingState.supervisor_pid -ErrorAction SilentlyContinue)
-    }
-    if (-not $supervisorAlive) {
-        Write-Host "Starting background Cloudflare Tunnel supervisor daemon..." -ForegroundColor Cyan
-        $supLog = "$ProjectRoot\runtime\supervisor.log"
-        $supErr = "$ProjectRoot\runtime\supervisor_err.log"
-        Start-Process -FilePath $PythonExe -ArgumentList @("""$ProjectRoot\tools\manage_tunnel.py""", "--action", "daemon") -RedirectStandardOutput $supLog -RedirectStandardError $supErr -WindowStyle Hidden
-    } else {
-        Write-Host "Waiting for existing tunnel supervisor to recover connectivity..." -ForegroundColor Cyan
-    }
-    $tunnelDeadline = (Get-Date).AddSeconds(30)
+    # Always launch a candidate. The manager's OS lock, not a reusable PID, decides
+    # ownership. A second candidate exits without starting another cloudflared.
+    Write-Host "Starting or joining the Cloudflare Tunnel supervisor..." -ForegroundColor Cyan
+    $supLog = "$ProjectRoot\runtime\supervisor.log"
+    $supErr = "$ProjectRoot\runtime\supervisor_err.log"
+    Start-Process -FilePath $PythonExe -ArgumentList @("""$ProjectRoot\tools\manage_tunnel.py""", "--action", "daemon") -RedirectStandardOutput $supLog -RedirectStandardError $supErr -WindowStyle Hidden
+    # Match the bounded command timeout; a Quick Tunnel handshake can exceed 30s.
+    $tunnelDeadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $tunnelReady = $false
     do {
         Start-Sleep -Seconds 2
@@ -158,7 +148,12 @@ if ($LASTEXITCODE -ne 0) {
         }
     } while ((Get-Date) -lt $tunnelDeadline)
     if (-not $tunnelReady) {
-        Write-Host "Tunnel recovery failed. Inspect runtime\supervisor_err.log and runtime\cloudflared.log." -ForegroundColor Red
+        $failureDetail = ""
+        if (Test-Path "$ProjectRoot\runtime\supervisor_err.log") {
+            $failureDetail = (Get-Content "$ProjectRoot\runtime\supervisor_err.log" -Tail 3) -join " "
+        }
+        Write-Host "Tunnel recovery failed after $TimeoutSeconds seconds. $failureDetail" -ForegroundColor Red
+        Write-Host "Inspect runtime\supervisor_err.log and runtime\cloudflared.log." -ForegroundColor Red
         throw "Cloudflare Tunnel or Telegram webhook is NOT READY."
     }
 }
