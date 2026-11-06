@@ -65,7 +65,9 @@ def test_resources_hide_secrets_and_mark_missing_and_local(client):
     assert "LR3 Google Sheets: NOT CONFIGURED" in text
     assert "Grafana: http://127.0.0.1:3000 — LOCAL ONLY" in text
     assert settings.INTERNAL_API_KEY not in text
-    assert settings.TELEGRAM_BOT_TOKEN not in text
+    assert "TELEGRAM_BOT_TOKEN" not in text
+    if settings.TELEGRAM_BOT_TOKEN:
+        assert settings.TELEGRAM_BOT_TOKEN not in text
 
 
 @pytest.mark.parametrize("command", ["/admin", "/mode", "/notifications", "/resources"])
