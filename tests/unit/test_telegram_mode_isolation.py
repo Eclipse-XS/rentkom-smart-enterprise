@@ -57,13 +57,13 @@ async def test_lr2_mode_isolation_and_keyboard(db_session):
     assert res1.reply_markup is not None
     assert "keyboard" in res1.reply_markup
     keyboard_texts = [btn["text"] for row in res1.reply_markup["keyboard"] for btn in row]
-    assert "🏢 Процес купівлі/продажу" in keyboard_texts
-    assert "🔑 Послуги для орендодавців" in keyboard_texts
+    assert "Процес купівлі/продажу" in keyboard_texts
+    assert "Послуги для орендодавців" in keyboard_texts
 
     # 2. Buying process
     up2 = TelegramUpdateMock(
         update_id=910002,
-        message={"chat": {"id": 11111}, "text": "🏢 Процес купівлі/продажу"}
+        message={"chat": {"id": 11111}, "text": "Процес купівлі/продажу"}
     )
     res2 = await process_telegram_update(up2, db=db_session)
     assert res2.route == "Купівля/Продаж"
@@ -72,7 +72,7 @@ async def test_lr2_mode_isolation_and_keyboard(db_session):
     # 3. Landlord services
     up3 = TelegramUpdateMock(
         update_id=910003,
-        message={"chat": {"id": 11111}, "text": "🔑 Послуги для орендодавців"}
+        message={"chat": {"id": 11111}, "text": "Послуги для орендодавців"}
     )
     res3 = await process_telegram_update(up3, db=db_session)
     assert res3.route == "Орендодавцям"

@@ -35,8 +35,8 @@ def test_exact_restored_notification_text_and_markup():
     assert lr2_text == EXPECTED_LR2_TEXT
     assert lr2_markup == {
         "keyboard": [[
-            {"text": "🏢 Процес купівлі/продажу"},
-            {"text": "🔑 Послуги для орендодавців"},
+            {"text": "Процес купівлі/продажу"},
+            {"text": "Послуги для орендодавців"},
         ]],
         "resize_keyboard": True,
     }

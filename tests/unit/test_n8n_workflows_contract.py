@@ -72,7 +72,7 @@ def test_single_authoritative_active_telegram_router():
     assert telegram_ingress["credentials"]["httpHeaderAuth"]["id"] == "RentkomTelegramWebhookSecret"
 
 
-def test_feedback_workflow_does_not_default_missing_ratings_to_five(client):
+def test_feedback_workflow_isolated_from_postgresql_and_does_not_default_ratings(client):
     """
     Verify that feedback_to_telegram.json does NOT default missing service_rating or realtor_rating to 5,
     and that FastAPI rejects null/missing ratings with HTTP 422 rather than storing false 5-star reviews.
@@ -80,12 +80,12 @@ def test_feedback_workflow_does_not_default_missing_ratings_to_five(client):
     with open(f"{WORKFLOW_DIR}/feedback_to_telegram.json", "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    persist_node = next(n for n in data["nodes"] if n["id"] == "u-node-persist-feedback-pg")
-    json_body_expr = persist_node["parameters"]["jsonBody"]
-
-    # Must fall back to null, not 5
-    assert ": 5)" not in json_body_expr
-    assert ": null)" in json_body_expr
+    assert all(n["id"] != "u-node-persist-feedback-pg" for n in data["nodes"])
+    assert "/api/v1/feedbacks/" not in json.dumps(data, ensure_ascii=False)
+    notification = next(n for n in data["nodes"] if n["name"] == "Send Telegram Notification")
+    assert "Оцінка сервісу" in notification["parameters"]["text"]
+    assert "Оцінка рієлтора" in notification["parameters"]["text"]
+    assert ": 5)" not in notification["parameters"]["text"]
 
     # FastAPI endpoint must reject null ratings with 422
     bad_payload = {

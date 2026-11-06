@@ -20,6 +20,7 @@ from core.database import SessionLocal
 from core.models import Customer, ServiceRequest, NotificationOutbox, TelegramInbox, CustomerFeedback
 from core.config import settings
 from core.services.outbox_service import process_outbox
+from core.api.v1.endpoints.telegram import set_telegram_bot_mode
 
 WEBHOOK_ROUTER_URL = "http://localhost:5678/webhook/rentkom-unified-router-test"
 WEBHOOK_FEEDBACK_URL = "http://localhost:5678/webhook/rentkom-feedback-test"
@@ -88,6 +89,7 @@ def test_scenario_a_api_postgres_outbox_mock_provider_grafana(db_session):
 
 def test_scenario_b_test_webhook_unified_router_qdrant_ollama(db_session):
     """Scenario B: Test Webhook -> Unified Router -> Qdrant -> Ollama -> Mock Response"""
+    set_telegram_bot_mode("LR6", db_session)
     if not _is_port_open(5678):
         # Verify via FastAPI webhook endpoint directly when n8n daemon is not running
         msg_id = int(time.time() * 100) % 900000 + 100000
