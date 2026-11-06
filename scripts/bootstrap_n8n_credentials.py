@@ -135,7 +135,7 @@ def bootstrap_credentials():
         google_creds = [
             {
                 "id": "w2ZVcryJf7CxkU0H",
-                "name": "Google Sheets | OI43 Lab3",
+                "name": "Google Sheets | Triggers (LR3 + LR4)",
                 "type": "googleSheetsTriggerOAuth2Api",
                 "data": {
                     "clientId": google_cid,
@@ -153,7 +153,7 @@ def bootstrap_credentials():
             },
             {
                 "id": "LAB5SheetsCred1",
-                "name": "Google Sheets | OI43 LAB5",
+                "name": "Google Sheets | Reader (LR5)",
                 "type": "googleSheetsOAuth2Api",
                 "data": {
                     "clientId": google_cid,
