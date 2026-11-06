@@ -138,7 +138,7 @@
         {
           "cacheDurationSeconds": 30,
           "datasource": {"type": "marcusolsson-json-datasource", "uid": "rentkom-lr3-sheets"},
-          "fields": [{"jsonPath": "$[*].responses", "language": "jsonpath", "name": "Відгуків", "type": "number"}],
+          "fields": [{"jsonPath": "$[0].total_responses", "language": "jsonpath", "name": "Відгуків", "type": "number"}],
           "method": "GET",
           "refId": "A",
           "type": "json",
@@ -164,7 +164,7 @@
         {
           "cacheDurationSeconds": 30,
           "datasource": {"type": "marcusolsson-json-datasource", "uid": "rentkom-lr3-sheets"},
-          "fields": [{"jsonPath": "$[*].service_rating", "language": "jsonpath", "name": "Оцінка з 5", "type": "number"}],
+          "fields": [{"jsonPath": "$[0].overall_service_rating", "language": "jsonpath", "name": "Оцінка з 5", "type": "number"}],
           "method": "GET",
           "refId": "A",
           "type": "json",
@@ -214,7 +214,7 @@
         {
           "cacheDurationSeconds": 30,
           "datasource": {"type": "marcusolsson-json-datasource", "uid": "rentkom-lr3-sheets"},
-          "fields": [{"jsonPath": "$[*].realtor_rating", "language": "jsonpath", "name": "Оцінка з 5", "type": "number"}],
+          "fields": [{"jsonPath": "$[0].overall_realtor_rating", "language": "jsonpath", "name": "Оцінка з 5", "type": "number"}],
           "method": "GET",
           "refId": "A",
           "type": "json",
@@ -348,5 +348,6 @@
   },
   "title": "Rentkom: Business Analytics & Operational Funnel",
   "uid": "rentkom-business-analytics",
+  "refresh": "1m",
   "version": 1
 }

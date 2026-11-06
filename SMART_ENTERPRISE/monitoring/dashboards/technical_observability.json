@@ -288,7 +288,7 @@
       "title": "Середня затримка доставки (Average Delivery Delay, сек)",
       "type": "stat",
       "gridPos": {
-        "h": 4,
+        "h": 6,
         "w": 6,
         "x": 0,
         "y": 4
@@ -393,86 +393,6 @@
           "format": "table"
         }
       ]
-    },
-    {
-      "id": 99,
-      "title": "Real Provider Acceptance (Live)",
-      "type": "stat",
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 8,
-        "y": 0
-      },
-      "targets": [
-        {
-          "format": "table",
-          "rawSql": "SELECT COUNT(*) AS value FROM notification_outbox WHERE status = 'PROVIDER_ACCEPTED';",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "lab5-postgres"
-      }
-    },
-    {
-      "id": 100,
-      "title": "Notification Retry Attempts",
-      "type": "stat",
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 20,
-        "y": 0
-      },
-      "targets": [
-        {
-          "format": "table",
-          "rawSql": "SELECT COALESCE(SUM(retry_count), 0) AS value FROM notification_outbox;",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "orange",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "lab5-postgres"
-      }
     }
   ],
   "schemaVersion": 38,
@@ -489,5 +409,6 @@
   },
   "title": "Rentkom: Technical Observability & Delivery Health",
   "uid": "rentkom-technical-obs",
+  "refresh": "30s",
   "version": 2
 }

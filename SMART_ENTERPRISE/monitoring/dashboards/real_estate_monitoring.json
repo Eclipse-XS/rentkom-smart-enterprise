@@ -19,7 +19,7 @@
         "defaults": {
           "color": {
             "fixedColor": "green",
-            "mode": "fixedColor"
+          "mode": "fixed"
           },
           "decimals": 2,
           "max": 5,
@@ -82,7 +82,7 @@
           },
           "fields": [
             {
-              "jsonPath": "$[*].service_rating",
+              "jsonPath": "$[0].overall_service_rating",
               "language": "jsonpath",
               "name": "Оцінка з 5",
               "type": "number"
@@ -108,7 +108,7 @@
         "defaults": {
           "color": {
             "fixedColor": "blue",
-            "mode": "fixedColor"
+          "mode": "fixed"
           },
           "decimals": 2,
           "max": 5,
@@ -171,7 +171,7 @@
           },
           "fields": [
             {
-              "jsonPath": "$[*].realtor_rating",
+              "jsonPath": "$[0].overall_realtor_rating",
               "language": "jsonpath",
               "name": "Оцінка з 5",
               "type": "number"
@@ -197,7 +197,7 @@
         "defaults": {
           "color": {
             "fixedColor": "purple",
-            "mode": "fixedColor"
+          "mode": "fixed"
           },
           "decimals": 0,
           "min": 0,
@@ -251,7 +251,7 @@
           },
           "fields": [
             {
-              "jsonPath": "$[*].responses",
+              "jsonPath": "$[0].total_responses",
               "language": "jsonpath",
               "name": "Відгуків",
               "type": "number"
@@ -419,7 +419,7 @@
         "defaults": {
           "color": {
             "fixedColor": "semi-dark-blue",
-            "mode": "fixedColor"
+          "mode": "fixed"
           },
           "decimals": 0,
           "mappings": [],

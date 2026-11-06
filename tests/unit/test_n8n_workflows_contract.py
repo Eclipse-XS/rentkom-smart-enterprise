@@ -99,6 +99,77 @@ def test_feedback_workflow_isolated_from_postgresql_and_does_not_default_ratings
     assert resp.status_code == 422
 
 
+def test_lr5_weighted_csat_contract_with_unequal_daily_counts():
+    with open(f"{WORKFLOW_DIR}/monitoring_api.json", "r", encoding="utf-8") as f:
+        workflow = json.load(f)
+
+    aggregate = next(n for n in workflow["nodes"] if n["id"] == "aggregate-ratings")
+    code = aggregate["parameters"]["jsCode"]
+    assert "totalService += service" in code
+    assert "totalRealtor += realtor" in code
+    assert "totalService / totalCount" in code
+    assert "overall_service_rating" in code
+    assert "total_responses" in code
+
+    daily = [(5.0, 1), (1.0, 3)]
+    weighted = sum(average * count for average, count in daily) / sum(count for _, count in daily)
+    unweighted = sum(average for average, _ in daily) / len(daily)
+    assert weighted == 2.0
+    assert unweighted == 3.0
+    assert weighted != unweighted
+
+
+def test_grafana_dashboard_contracts_are_supported_and_non_overlapping():
+    dashboard_dir = "SMART_ENTERPRISE/monitoring/dashboards"
+    paths = [
+        os.path.join(dashboard_dir, "real_estate_monitoring.json"),
+        os.path.join(dashboard_dir, "business_analytics.json"),
+        os.path.join(dashboard_dir, "technical_observability.json"),
+    ]
+    dashboards = []
+
+    def assert_supported_color_modes(value):
+        if isinstance(value, dict):
+            assert value.get("mode") != "fixedColor"
+            for child in value.values():
+                assert_supported_color_modes(child)
+        elif isinstance(value, list):
+            for child in value:
+                assert_supported_color_modes(child)
+
+    for path in paths:
+        with open(path, "r", encoding="utf-8") as f:
+            dashboard = json.load(f)
+        dashboards.append(dashboard)
+        assert_supported_color_modes(dashboard)
+
+        occupied = set()
+        for panel in dashboard["panels"]:
+            pos = panel["gridPos"]
+            cells = {
+                (x, y)
+                for x in range(pos["x"], pos["x"] + pos["w"])
+                for y in range(pos["y"], pos["y"] + pos["h"])
+            }
+            assert occupied.isdisjoint(cells), f"Overlapping panel {panel['id']} in {path}"
+            occupied.update(cells)
+
+    assert len({dashboard["uid"] for dashboard in dashboards}) == len(dashboards)
+    datasource_config = open(
+        "SMART_ENTERPRISE/monitoring/provisioning/datasources/datasources.yml",
+        "r",
+        encoding="utf-8",
+    ).read()
+    referenced_uids = {
+        panel.get("datasource", {}).get("uid")
+        for dashboard in dashboards
+        for panel in dashboard["panels"]
+        if panel.get("datasource", {}).get("uid")
+    }
+    for uid in referenced_uids:
+        assert f"uid: {uid}" in datasource_config
+
+
 def test_end_to_end_local_workflow_contract_harness(client, db_session):
     """
     Offline/local E2E contract harness (Section 8.3):
