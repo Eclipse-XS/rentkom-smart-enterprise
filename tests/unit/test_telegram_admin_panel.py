@@ -41,7 +41,26 @@ def test_forged_admin_callback_is_rejected_without_state_change(client, db_sessi
         headers=_headers(),
     )
     assert response.json()["status"] == "FORBIDDEN"
+    assert response.json()["response_text"] == "Недостатньо прав."
     assert client.get("/api/v1/telegram/mode").json()["mode"] == "LR2"
+
+
+def test_forged_notification_callback_is_rejected_without_state_change(client, db_session):
+    set_lr3_notifications_enabled(False, db_session)
+    response = client.post(
+        "/api/v1/telegram/mode/telegram-control",
+        json=_payload(
+            "SET_NOTIFICATIONS", user_id=222, chat_id=222,
+            callback_data="notifications:ON", callback_query_id="forged",
+        ),
+        headers=_headers(),
+    )
+    assert response.json()["status"] == "FORBIDDEN"
+    assert response.json()["response_text"] == "Недостатньо прав."
+    panel = client.post(
+        "/api/v1/telegram/mode/telegram-control", json=_payload("SHOW_ADMIN"), headers=_headers(),
+    )
+    assert "Сповіщення адміністратора: OFF" in panel.json()["response_text"]
 
 
 def test_admin_panel_reports_global_state(client, db_session):

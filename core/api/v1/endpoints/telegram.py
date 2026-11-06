@@ -254,7 +254,7 @@ async def telegram_mode_control(
         )
 
     if req.callback_query_id and not req.is_test:
-        answer_text = None if authorized else "Недостатньо прав для зміни режиму."
+        answer_text = None if authorized else "Недостатньо прав."
         await _telegram_api(
             "answerCallbackQuery",
             {
@@ -268,7 +268,7 @@ async def telegram_mode_control(
         return TelegramModeControlResponse(
             status="FORBIDDEN", action=req.action, authorized=False,
             callback_answered=callback_answered,
-            response_text="Недостатньо прав для зміни режиму.",
+            response_text="Недостатньо прав.",
         )
 
     if req.action == "SHOW_SELECTOR":
