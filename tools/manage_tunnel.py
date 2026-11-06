@@ -5,10 +5,12 @@ import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import sys
 import time
 import urllib.request
+import urllib.parse
 import uuid
 from pathlib import Path
 
@@ -26,7 +28,9 @@ LOCK_FILE = RUNTIME_DIR / "tunnel_supervisor.lock"
 LOG_FILE = RUNTIME_DIR / "cloudflared.log"
 WEBHOOK_PATH = "/webhook/rentkom-telegram-ingress-webhook"
 DEFAULT_LOCAL_TARGET = "http://127.0.0.1:5678"
-URL_PATTERN = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
+URL_PATTERN = re.compile(
+    r"https://(?:[a-zA-Z0-9-]+\.trycloudflare\.com|[a-zA-Z0-9-]+\.lhr\.life)"
+)
 CLOUDFLARED_SEARCH_PATHS = [
     r"C:\Program Files (x86)\cloudflared\cloudflared.exe",
     r"C:\Program Files\cloudflared\cloudflared.exe",
@@ -87,6 +91,19 @@ def find_cloudflared_binary():
     return None
 
 
+def find_ssh_binary():
+    import shutil
+    return shutil.which("ssh.exe") or shutil.which("ssh")
+
+
+def tcp_endpoint_reachable(host, port, timeout=5):
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def get_process_info(pid):
     """Return command identity so PID reuse cannot grant process ownership."""
     try:
@@ -132,16 +149,35 @@ def is_owned_supervisor(state, process_info=None):
     return bool(info and created_matches and "manage_tunnel.py" in command and "--action daemon" in command)
 
 
-def is_owned_cloudflared(state, process_info=None):
+def is_owned_tunnel(state, process_info=None):
     if not state or not state.get("pid") or not state.get("owner_id"):
         return False
     info = process_info or get_process_info(state["pid"])
-    if not info or "cloudflared" not in info.get("name", "").lower():
+    if not info:
         return False
     command = info.get("command_line", "").lower()
-    target = str(state.get("local_target") or DEFAULT_LOCAL_TARGET).lower()
     created_matches = not state.get("process_created") or state["process_created"] == info.get("created")
-    return created_matches and "tunnel" in command and "--url" in command and target in command
+    provider = state.get("provider", "cloudflare")
+    if provider == "cloudflare":
+        target = str(state.get("local_target") or DEFAULT_LOCAL_TARGET).lower()
+        signature_matches = (
+            "cloudflared" in info.get("name", "").lower()
+            and "tunnel" in command and "--url" in command and target in command
+        )
+    elif provider == "localhost_run":
+        signature_matches = (
+            info.get("name", "").lower() in {"ssh", "ssh.exe"}
+            and "nokey@localhost.run" in command
+            and "80:127.0.0.1:5678" in command
+        )
+    else:
+        signature_matches = False
+    return created_matches and signature_matches
+
+
+def is_owned_cloudflared(state, process_info=None):
+    """Compatibility alias retained for existing operational imports and tests."""
+    return is_owned_tunnel(state, process_info)
 
 
 def terminate_pid(pid, force=False):
@@ -180,7 +216,7 @@ def save_state(state):
 
 def detect_existing_tunnel():
     state = load_state()
-    if state and is_owned_cloudflared(state):
+    if state and is_owned_tunnel(state):
         url = state.get("url")
         if url and check_tunnel_health(url):
             return int(state["pid"]), url
@@ -194,7 +230,7 @@ def _log_failure_reason(text):
     return lines[-1] if lines else "public URL was not issued or did not pass /healthz"
 
 
-def start_tunnel(local_target=DEFAULT_LOCAL_TARGET, timeout=90, max_retries=3, owner_id=None):
+def start_cloudflare_tunnel(local_target=DEFAULT_LOCAL_TARGET, timeout=90, max_retries=3, owner_id=None):
     """Use the supported cloudflared CLI; never kill an unowned process."""
     binary = find_cloudflared_binary()
     if not binary:
@@ -212,12 +248,13 @@ def start_tunnel(local_target=DEFAULT_LOCAL_TARGET, timeout=90, max_retries=3, o
                                        stderr=subprocess.STDOUT, creationflags=flags)
             process_info = get_process_info(process.pid) or {}
             state = load_state() or {}
-            state.update({"owner_id": owner_id, "pid": process.pid, "url": None,
+            state.update({"owner_id": owner_id, "provider": "cloudflare",
+                          "pid": process.pid, "url": None,
                           "local_target": local_target, "started_at": time.time(),
                           "updated_at": time.time(),
                           "process_created": process_info.get("created", "")})
             save_state(state)  # allows exact child recovery if the supervisor crashes now
-            started, discovered = time.time(), None
+            started, discovered, text = time.time(), None, ""
             while time.time() - started < timeout:
                 if process.poll() is not None:
                     break
@@ -231,7 +268,8 @@ def start_tunnel(local_target=DEFAULT_LOCAL_TARGET, timeout=90, max_retries=3, o
                 if discovered and check_tunnel_health(discovered):
                     state = load_state() or {}
                     process_info = get_process_info(process.pid) or {}
-                    state.update({"owner_id": owner_id, "pid": process.pid, "url": discovered,
+                    state.update({"owner_id": owner_id, "provider": "cloudflare",
+                                  "pid": process.pid, "url": discovered,
                                   "local_target": local_target, "started_at": time.time(),
                                   "updated_at": time.time(),
                                   "process_created": process_info.get("created", "")})
@@ -250,6 +288,78 @@ def start_tunnel(local_target=DEFAULT_LOCAL_TARGET, timeout=90, max_retries=3, o
         if attempt < max_retries:
             time.sleep(min(5 * attempt, 15))
     raise RuntimeError(f"Quick Tunnel unavailable after {max_retries} attempts: {last_reason}")
+
+
+def start_localhost_run_tunnel(local_target=DEFAULT_LOCAL_TARGET, timeout=45, max_retries=2, owner_id=None):
+    """Start an account-free localhost.run SSH reverse tunnel."""
+    ssh = find_ssh_binary()
+    if not ssh:
+        raise RuntimeError("OpenSSH client not found; localhost.run fallback is unavailable")
+    parsed = urllib.parse.urlparse(local_target)
+    if parsed.hostname != "127.0.0.1" or not parsed.port:
+        raise RuntimeError("localhost.run fallback only permits an explicit 127.0.0.1 target")
+    remote_forward = f"80:{parsed.hostname}:{parsed.port}"
+    owner_id = owner_id or uuid.uuid4().hex
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    last_reason = "public URL was not issued"
+    for attempt in range(1, max_retries + 1):
+        print(f"[*] Starting localhost.run HTTPS fallback (attempt {attempt}/{max_retries})", flush=True)
+        command = [
+            ssh, "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "ExitOnForwardFailure=yes", "-o", "ConnectTimeout=10",
+            "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
+            "-R", remote_forward, "nokey@localhost.run",
+        ]
+        with open(LOG_FILE, "a", encoding="utf-8") as log_file:
+            log_file.write(f"\n--- localhost.run attempt {attempt} ---\n")
+            log_file.flush()
+            flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+            process = subprocess.Popen(command, stdout=log_file, stderr=subprocess.STDOUT,
+                                       creationflags=flags)
+            process_info = get_process_info(process.pid) or {}
+            state = load_state() or {}
+            state.update({"owner_id": owner_id, "provider": "localhost_run", "pid": process.pid,
+                          "url": None, "local_target": local_target, "started_at": time.time(),
+                          "updated_at": time.time(), "process_created": process_info.get("created", "")})
+            save_state(state)
+            started, discovered, text = time.time(), None, ""
+            while time.time() - started < timeout:
+                if process.poll() is not None:
+                    break
+                try:
+                    text = LOG_FILE.read_text(encoding="utf-8", errors="replace")
+                    matches = URL_PATTERN.findall(text)
+                    if matches:
+                        discovered = matches[-1]
+                except OSError:
+                    text = ""
+                if discovered and check_tunnel_health(discovered):
+                    state = load_state() or {}
+                    state.update({"url": discovered, "updated_at": time.time()})
+                    save_state(state)
+                    print(f"[SUCCESS] localhost.run tunnel established: {discovered} (PID: {process.pid})",
+                          flush=True)
+                    return process.pid, discovered
+                time.sleep(2)
+            if process.poll() is None:
+                terminate_pid(process.pid, force=True)
+            last_reason = _log_failure_reason(text) if text else last_reason
+        if attempt < max_retries:
+            time.sleep(5 * attempt)
+    raise RuntimeError(f"localhost.run tunnel unavailable after {max_retries} attempts: {last_reason}")
+
+
+def start_tunnel(local_target=DEFAULT_LOCAL_TARGET, timeout=90, max_retries=3, owner_id=None):
+    """Prefer Cloudflare and fall back only when its API is unreachable."""
+    if tcp_endpoint_reachable("api.trycloudflare.com", 443):
+        try:
+            # One bounded CLI attempt is enough after the TCP probe; leave time for fallback.
+            return start_cloudflare_tunnel(local_target, min(timeout, 45), 1, owner_id)
+        except RuntimeError as exc:
+            print(f"[!] Cloudflare tunnel failed; trying localhost.run: {exc}", flush=True)
+    else:
+        print("[!] Cloudflare API TCP/443 is unreachable; using localhost.run fallback", flush=True)
+    return start_localhost_run_tunnel(local_target, min(timeout, 45), 2, owner_id)
 
 
 def get_telegram_webhook_info():
@@ -317,7 +427,7 @@ def verify_webhook(tunnel_url):
 
 def _cleanup_owned_child():
     state = load_state() or {}
-    if is_owned_cloudflared(state):
+    if is_owned_tunnel(state):
         terminate_pid(state["pid"], force=True)
 
 
@@ -325,7 +435,7 @@ def stop_tunnel():
     state = load_state() or {}
     if is_owned_supervisor(state) and int(state["supervisor_pid"]) != os.getpid():
         terminate_pid(state["supervisor_pid"], force=True)
-    if is_owned_cloudflared(state):
+    if is_owned_tunnel(state):
         terminate_pid(state["pid"], force=True)
     try:
         STATE_FILE.unlink(missing_ok=True)
@@ -362,8 +472,8 @@ def run_supervisor(local_target=DEFAULT_LOCAL_TARGET):
         while not stopping:
             time.sleep(15)
             state = load_state() or {}
-            if not is_owned_cloudflared(state) or not check_tunnel_health(url, timeout=10):
-                if is_owned_cloudflared(state):
+            if not is_owned_tunnel(state) or not check_tunnel_health(url, timeout=10):
+                if is_owned_tunnel(state):
                     terminate_pid(state["pid"], force=True)
                 pid, url = start_tunnel(local_target=local_target, owner_id=owner_id)
                 ok, reason = sync_telegram_webhook(url)

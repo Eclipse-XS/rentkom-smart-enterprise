@@ -183,7 +183,7 @@ From the repository root, start or reconcile the complete connected deployment w
 .\tools\start_demo.ps1
 ```
 
-The command reuses healthy containers and a healthy Cloudflare Quick Tunnel, restores a changed tunnel URL after restart, registers the Telegram webhook without dropping pending updates, and reports `STATUS: READY` only after service, tunnel, and webhook verification. Tunnel readiness uses the command's bounded `-TimeoutSeconds` value (180 seconds by default). An OS-level supervisor lock prevents concurrent starts; shutdown touches only Rentkom-owned processes. Runtime tunnel state and logs remain under the ignored `runtime/` directory.
+The command reuses healthy containers and a healthy HTTPS tunnel, restores a changed tunnel URL after restart, registers the Telegram webhook without dropping pending updates, and reports `STATUS: READY` only after service, tunnel, and webhook verification. Cloudflare Quick Tunnel remains preferred; when its API is unreachable, the manager uses the installed OpenSSH client with the account-free `localhost.run` fallback. Tunnel readiness uses the command's bounded `-TimeoutSeconds` value (180 seconds by default). An OS-level supervisor lock prevents concurrent starts; shutdown touches only Rentkom-owned processes. Runtime tunnel state and logs remain under the ignored `runtime/` directory.
 
 Stop the local stack without deleting volumes or database data:
 

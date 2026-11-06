@@ -126,10 +126,10 @@ if ($auditData) {
     }
 
     if ($auditData.tunnel.status -eq "READY") {
-        Write-Host "PASS Cloudflare Tunnel: $($auditData.tunnel.message)" -ForegroundColor Green
+        Write-Host "PASS External HTTPS Tunnel: $($auditData.tunnel.message)" -ForegroundColor Green
         $externalTunnelReady = $true
     } else {
-        Write-Host "INFO Cloudflare Tunnel: $($auditData.tunnel.message)" -ForegroundColor DarkGray
+        Write-Host "INFO External HTTPS Tunnel: $($auditData.tunnel.message)" -ForegroundColor DarkGray
     }
 
     if ($auditData.telegram.status -eq "READY") {
@@ -172,7 +172,7 @@ if ($hasDegraded) {
 
 if ($externalGoogleReady -and $externalTunnelReady -and $externalTelegramReady) {
     Write-Host "`nVERDICT: [EXTERNAL_READY]" -ForegroundColor Green
-    Write-Host "Explanation: All local microservices, AI models, and real external integrations (Google Sheets, Gmail OAuth, Cloudflare Tunnel, Telegram Webhook) are fully operational." -ForegroundColor Green
+    Write-Host "Explanation: All local microservices, AI models, and real external integrations (Google Sheets, Gmail OAuth, HTTPS Tunnel, Telegram Webhook) are fully operational." -ForegroundColor Green
     exit 0
 }
 

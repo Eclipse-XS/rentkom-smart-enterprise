@@ -2,7 +2,7 @@
 """
 Rentkom Smart Enterprise — External Integrations Auditor.
 Verifies Google Sheets & Gmail OAuth credentials in the n8n database,
-checks Cloudflare Tunnel status, and audits Telegram Bot API Webhook health.
+checks external HTTPS tunnel status, and audits Telegram Bot API Webhook health.
 Outputs clean JSON with status codes.
 """
 
@@ -123,12 +123,12 @@ def audit_cloudflare_tunnel():
             "pid": pid,
             "url": url,
             "webhook_url": state.get("webhook_url"),
-            "message": f"Tunnel active at {url} (PID: {pid})"
+            "message": f"Tunnel active via {state.get('provider', 'cloudflare')} at {url} (PID: {pid})"
         }
     else:
         return {
             "status": "INACTIVE",
-            "message": "No healthy Cloudflare tunnel detected"
+            "message": "No healthy external HTTPS tunnel detected"
         }
 
 

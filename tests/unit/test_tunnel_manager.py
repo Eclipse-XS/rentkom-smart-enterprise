@@ -85,7 +85,7 @@ def test_dns_failure_is_reported_and_only_spawned_pid_is_killed(monkeypatch, tmp
     monkeypatch.setattr(manage_tunnel, "terminate_pid", lambda pid, force=False: killed.append(pid))
     (tmp_path / "cloudflared.log").write_text("lookup api.trycloudflare.com: no such host")
     with pytest.raises(RuntimeError, match="no such host"):
-        manage_tunnel.start_tunnel(timeout=0, max_retries=1)
+        manage_tunnel.start_cloudflare_tunnel(timeout=0, max_retries=1)
     assert killed == []  # exited itself; no global process cleanup
 
 
@@ -99,7 +99,7 @@ def test_cloudflare_timeout_is_reported(monkeypatch, tmp_path):
     monkeypatch.setattr(manage_tunnel, "get_process_info", lambda pid: {})
     (tmp_path / "cloudflared.log").write_text("context deadline exceeded")
     with pytest.raises(RuntimeError, match="context deadline exceeded"):
-        manage_tunnel.start_tunnel(timeout=0, max_retries=1)
+        manage_tunnel.start_cloudflare_tunnel(timeout=0, max_retries=1)
 
 
 def test_sync_preserves_pending_updates_and_allowed_updates(monkeypatch):
@@ -177,7 +177,7 @@ def test_unicode_and_space_paths_are_passed_as_one_argument(monkeypatch, tmp_pat
     monkeypatch.setattr(manage_tunnel.subprocess, "Popen", popen)
     monkeypatch.setattr(manage_tunnel, "get_process_info", lambda pid: {})
     with pytest.raises(RuntimeError):
-        manage_tunnel.start_tunnel(timeout=0, max_retries=1)
+        manage_tunnel.start_cloudflare_tunnel(timeout=0, max_retries=1)
     assert captured["args"][0] == binary
 
 
@@ -199,3 +199,21 @@ def test_crash_recovery_kills_only_recorded_owned_child(monkeypatch):
     monkeypatch.setattr(manage_tunnel, "terminate_pid", lambda pid, force=False: killed.append(pid))
     manage_tunnel._cleanup_owned_child()
     assert killed == [77]
+
+
+def test_unreachable_cloudflare_selects_localhost_run(monkeypatch):
+    monkeypatch.setattr(manage_tunnel, "tcp_endpoint_reachable", lambda host, port: False)
+    fallback = MagicMock(return_value=(12, "https://abc.lhr.life"))
+    monkeypatch.setattr(manage_tunnel, "start_localhost_run_tunnel", fallback)
+    assert manage_tunnel.start_tunnel() == (12, "https://abc.lhr.life")
+    fallback.assert_called_once()
+
+
+def test_localhost_run_process_ownership_is_provider_specific():
+    state = {"owner_id": "rentkom", "provider": "localhost_run", "pid": 88,
+             "process_created": "stamp", "local_target": manage_tunnel.DEFAULT_LOCAL_TARGET}
+    owned = {"pid": 88, "name": "ssh.exe", "created": "stamp",
+             "command_line": "ssh -T -R 80:127.0.0.1:5678 nokey@localhost.run"}
+    unrelated = dict(owned, command_line="ssh -R 80:127.0.0.1:9000 other@example.com")
+    assert manage_tunnel.is_owned_tunnel(state, owned)
+    assert not manage_tunnel.is_owned_tunnel(state, unrelated)

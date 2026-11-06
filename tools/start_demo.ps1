@@ -60,8 +60,13 @@ $cloudflaredCandidates = @(
     "C:\Program Files (x86)\cloudflared\cloudflared.exe",
     "C:\Program Files\cloudflared\cloudflared.exe"
 ) | Where-Object { $_ -and (Test-Path $_) }
-if (-not $cloudflaredCandidates) { throw "cloudflared is not available. Install Cloudflare Tunnel before startup." }
-Write-Host "PASS Python and cloudflared prerequisites are available." -ForegroundColor Green
+$sshCommand = Get-Command ssh -ErrorAction SilentlyContinue
+if (-not $cloudflaredCandidates -and -not $sshCommand) {
+    throw "Neither cloudflared nor OpenSSH is available; no supported HTTPS tunnel can start."
+}
+if ($cloudflaredCandidates) { Write-Host "PASS cloudflared primary tunnel client is available." -ForegroundColor Green }
+if ($sshCommand) { Write-Host "PASS OpenSSH Ethernet fallback is available." -ForegroundColor Green }
+Write-Host "PASS Python and HTTPS tunnel prerequisites are available." -ForegroundColor Green
 
 # 4. Validate Host Ollama
 try {
@@ -126,13 +131,13 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "PASS Automation manifests reconciled and verified." -ForegroundColor Green
 }
 
-# 8. Manage Cloudflare Tunnel & Telegram Webhook
-Write-Host "`n[5/6] Managing Cloudflare Development Tunnel & Telegram Webhook..." -ForegroundColor Yellow
+# 8. Manage External HTTPS Tunnel & Telegram Webhook
+Write-Host "`n[5/6] Managing External HTTPS Tunnel & Telegram Webhook..." -ForegroundColor Yellow
 $tunnelStatus = & $PythonExe "$ProjectRoot\tools\manage_tunnel.py" --action status 2>&1
 if ($LASTEXITCODE -ne 0) {
     # Always launch a candidate. The manager's OS lock, not a reusable PID, decides
     # ownership. A second candidate exits without starting another cloudflared.
-    Write-Host "Starting or joining the Cloudflare Tunnel supervisor..." -ForegroundColor Cyan
+    Write-Host "Starting or joining the HTTPS tunnel supervisor..." -ForegroundColor Cyan
     $supLog = "$ProjectRoot\runtime\supervisor.log"
     $supErr = "$ProjectRoot\runtime\supervisor_err.log"
     Start-Process -FilePath $PythonExe -ArgumentList @("""$ProjectRoot\tools\manage_tunnel.py""", "--action", "daemon") -RedirectStandardOutput $supLog -RedirectStandardError $supErr -WindowStyle Hidden
@@ -154,11 +159,11 @@ if ($LASTEXITCODE -ne 0) {
         }
         Write-Host "Tunnel recovery failed after $TimeoutSeconds seconds. $failureDetail" -ForegroundColor Red
         Write-Host "Inspect runtime\supervisor_err.log and runtime\cloudflared.log." -ForegroundColor Red
-        throw "Cloudflare Tunnel or Telegram webhook is NOT READY."
+        throw "External HTTPS tunnel or Telegram webhook is NOT READY."
     }
 }
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "PASS Cloudflare Tunnel & Telegram Webhook active:" -ForegroundColor Green
+    Write-Host "PASS External HTTPS Tunnel & Telegram Webhook active:" -ForegroundColor Green
     $tunnelStatus | ForEach-Object { Write-Host "     $_" -ForegroundColor Cyan }
 }
 
