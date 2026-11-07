@@ -41,7 +41,7 @@ def test_forged_admin_callback_is_rejected_without_state_change(client, db_sessi
         headers=_headers(),
     )
     assert response.json()["status"] == "FORBIDDEN"
-    assert response.json()["response_text"] == "Недостатньо прав."
+    assert "Доступ заборонено" in response.json()["response_text"]
     assert client.get("/api/v1/telegram/mode").json()["mode"] == "LR2"
 
 
@@ -56,11 +56,11 @@ def test_forged_notification_callback_is_rejected_without_state_change(client, d
         headers=_headers(),
     )
     assert response.json()["status"] == "FORBIDDEN"
-    assert response.json()["response_text"] == "Недостатньо прав."
+    assert "Доступ заборонено" in response.json()["response_text"]
     panel = client.post(
         "/api/v1/telegram/mode/telegram-control", json=_payload("SHOW_ADMIN"), headers=_headers(),
     )
-    assert "Сповіщення адміністратора: OFF" in panel.json()["response_text"]
+    assert "Сповіщення про відгуки: ⛔ вимкнено" in panel.json()["response_text"]
 
 
 def test_admin_panel_reports_global_state(client, db_session):
@@ -71,8 +71,8 @@ def test_admin_panel_reports_global_state(client, db_session):
     )
     assert response.status_code == 200
     assert response.json()["authorized"] is True
-    assert "Поточний глобальний режим: LR6" in response.json()["response_text"]
-    assert "Сповіщення адміністратора: ON" in response.json()["response_text"]
+    assert "Режим асистента: <b>LR6</b>" in response.json()["response_text"]
+    assert "Сповіщення про відгуки: ✅ увімкнено" in response.json()["response_text"]
 
 
 def test_user_resources_contain_exactly_two_public_actions(client):
@@ -93,10 +93,10 @@ def test_user_resources_contain_exactly_two_public_actions(client):
     data = response.json()
     assert data["status"] == "RESOURCES_SENT"
     assert data["authorized"] is False
-    assert data["response_text"] == "Rentkom | Корисні посилання"
+    assert "<b>Корисні ресурси Rentkom</b>" in data["response_text"]
     assert data["reply_markup"]["inline_keyboard"] == [
-        [{"text": "Залишити відгук", "url": "https://forms.example/feedback"}],
-        [{"text": "Записатися на консультацію", "url": "https://forms.example/consultation"}],
+        [{"text": "📝 Залишити відгук", "url": "https://forms.example/feedback"}],
+        [{"text": "📅 Записатися на консультацію", "url": "https://forms.example/consultation"}],
     ]
     serialized = str(data)
     for private_value in (
@@ -123,14 +123,13 @@ def test_admin_resources_extend_public_menu_without_local_url_buttons(client):
     data = response.json()
     assert data["authorized"] is True
     assert "Дані та аналітика" in data["response_text"]
-    assert "Інфраструктура" in data["response_text"]
-    assert "Локальний доступ: Grafana, n8n." in data["response_text"]
-    assert "127.0.0.1" not in str(data)
-    assert "localhost" not in str(data)
+    assert "Локальна інфраструктура" in data["response_text"]
+    assert "http://127.0.0.1:3000" in data["response_text"]
+    assert "http://localhost:5678" in data["response_text"]
     buttons = [row[0] for row in data["reply_markup"]["inline_keyboard"]]
     assert [button["text"] for button in buttons] == [
-        "Залишити відгук", "Записатися на консультацію",
-        "Google Sheets: відгуки", "Google Sheets: заявки", "FastAPI Swagger",
+        "📝 Залишити відгук", "📅 Записатися на консультацію",
+        "Google Sheets: відгуки", "Google Sheets: заявки", "📘 FastAPI Swagger",
     ]
 
 
@@ -161,14 +160,14 @@ def test_admin_resources_include_all_configured_remote_actions(client):
     assert data["authorized"] is True
     buttons = [row[0] for row in data["reply_markup"]["inline_keyboard"]]
     assert [button["text"] for button in buttons] == [
-        "Залишити відгук",
-        "Записатися на консультацію",
+        "📝 Залишити відгук",
+        "📅 Записатися на консультацію",
         "Google Sheets: відгуки",
         "Google Sheets: заявки",
-        "Grafana",
-        "n8n",
-        "FastAPI Swagger",
-        "Qdrant Dashboard",
+        "📊 Grafana",
+        "🔄 n8n",
+        "📘 FastAPI Swagger",
+        "🗂️ Qdrant Dashboard",
     ]
 
 
@@ -219,7 +218,7 @@ def test_missing_public_resource_is_a_message_not_broken_button(client):
             json=_payload("SHOW_RESOURCES", user_id=111, chat_id=111), headers=_headers(),
         )
     data = response.json()
-    assert "Недоступно: Залишити відгук." in data["response_text"]
+    assert "Недоступно: 📝 Залишити відгук." in data["response_text"]
     assert len(data["reply_markup"]["inline_keyboard"]) == 1
 
 

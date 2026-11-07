@@ -280,7 +280,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Вітаю! Я інформаційний помічник агентства нерухомості «Рентком» (м. Львів).\\n\\nЯ можу відповісти за матеріалами корпоративної бази знань про:\\n• купівлю житла та 6-етапну перевірку документів;\\n• порядок підписання договорів та нотаріальне посвідчення;\\n• умови типового договору оренди;\\n• послуги агентства та правила конфіденційності.\\n\\nПоставте будь-яке запитання з нерухомості у вільній формі.' } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: '🤖 <b>AI-консультант Rentkom</b>\\n\\nВідповідаю за матеріалами бази знань про:\\n• купівлю житла та перевірку документів;\\n• договори й нотаріальне оформлення;\\n• оренду та послуги агентства;\\n• правила конфіденційності.\\n\\nПоставте запитання у вільній формі.', parse_mode: 'HTML', reply_markup: { remove_keyboard: true } } }}",
         "options": {
           "timeout": 15000
         },
@@ -330,7 +330,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: $json.answer ? $json.answer + ($json.sources && $json.sources.length ? '\\n\\n📚 [Джерела: ' + $json.sources.join(', ') + ']' : '') : 'Вибачте, сервіс консультацій тимчасово недоступний. Будь ласка, зверніться за номером +38 (032) 240-00-00.' } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: $json.answer ? '💬 <b>Відповідь Rentkom</b>\\n\\n' + String($json.answer).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + ($json.sources && $json.sources.length ? '\\n\\n📚 <b>Джерела</b>\\n' + $json.sources.map(s => '• ' + String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')).join('\\n') : '') : '⚠️ <b>Консультація тимчасово недоступна</b>\\n\\nСпробуйте повторити запит пізніше.', parse_mode: 'HTML' } }}",
         "options": {
           "timeout": 15000
         },
@@ -452,7 +452,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Вітаємо у навчальному чат-боті агентства нерухомості «Рентком»!\\nОберіть потрібний розділ:', reply_markup: { keyboard: [[{text: 'Процес купівлі/продажу'}, {text: 'Послуги для орендодавців'}]], resize_keyboard: true } } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: '🏡 <b>Rentkom — асистент з нерухомості</b>\\n\\nОберіть потрібний розділ:', parse_mode: 'HTML', reply_markup: { keyboard: [[{text: '🏠 Купівля та продаж'}, {text: '🔑 Орендодавцям'}]], resize_keyboard: true } } }}",
         "options": {
           "timeout": 15000
         },
@@ -481,7 +481,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Процес купівлі/продажу:\\n\\n1. Звернення та визначення потреб: бюджет, район, тип об’єкта, площа, кількість кімнат і строки.\\n2. Підбір об’єктів за визначеними критеріями.\\n3. Узгодження та проведення переглядів.\\n4. Вибір відповідного об’єкта.\\n5. Перевірка необхідних документів компетентним фахівцем.\\n6. Переговори щодо ціни, строків і умов розрахунку.\\n7. Підготовка угоди: за потреби завдаток, договір, нотаріальне оформлення та розрахунок.\\n8. Передача об’єкта і ключів, завершення угоди.' } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: '🏠 <b>Купівля та продаж нерухомості</b>\\n\\n1. Визначення потреб і бюджету.\\n2. Підбір об’єктів за критеріями.\\n3. Організація переглядів.\\n4. Вибір об’єкта.\\n5. Перевірка документів фахівцем.\\n6. Узгодження ціни та умов.\\n7. Підготовка й оформлення угоди.\\n8. Передача об’єкта та ключів.', parse_mode: 'HTML' } }}",
         "options": {
           "timeout": 15000
         },
@@ -510,7 +510,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Послуги для орендодавців у навчальному сценарії:\\n\\n• консультація та визначення умов здачі;\\n• підготовка і презентація об’єкта;\\n• розміщення та просування пропозиції;\\n• пошук потенційного орендаря і первинний відбір кандидатів;\\n• організація переглядів та погодження умов;\\n• підготовка інформації і документів для оформлення;\\n• супровід укладення договору та передачі об’єкта;\\n• подальша комунікація й координація питань у межах управління об’єктом.' } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: '🔑 <b>Послуги для орендодавців</b>\\n\\n• консультація та визначення умов здачі;\\n• підготовка і презентація об’єкта;\\n• просування пропозиції;\\n• відбір кандидатів та організація переглядів;\\n• підготовка інформації й документів;\\n• супровід договору та передачі об’єкта;\\n• подальша координація питань.', parse_mode: 'HTML' } }}",
         "options": {
           "timeout": 15000
         },
@@ -539,7 +539,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: 'Не вдалося розпізнати запит.\\n\\nЯ можу надати інформацію про:\\n• процес купівлі/продажу;\\n• послуги для орендодавців.\\n\\nСкористайтеся кнопками меню або надішліть /start.', reply_markup: { keyboard: [[{text: 'Процес купівлі/продажу'}, {text: 'Послуги для орендодавців'}]], resize_keyboard: true } } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: '❓ <b>Запит не розпізнано</b>\\n\\nОберіть розділ за допомогою кнопок меню або надішліть /help.', parse_mode: 'HTML', reply_markup: { keyboard: [[{text: '🏠 Купівля та продаж'}, {text: '🔑 Орендодавцям'}]], resize_keyboard: true } } }}",
         "options": {
           "timeout": 15000
         },

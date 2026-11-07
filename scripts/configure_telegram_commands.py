@@ -6,10 +6,11 @@ import urllib.request
 
 
 USER_COMMANDS = [
-    {"command": "start", "description": "Почати роботу"},
+    {"command": "start", "description": "Головне меню"},
+    {"command": "help", "description": "Допомога та команди"},
+    {"command": "resources", "description": "Корисні ресурси"},
     {"command": "feedback", "description": "Залишити відгук"},
     {"command": "consultation", "description": "Записатися на консультацію"},
-    {"command": "resources", "description": "Корисні посилання"},
 ]
 
 ADMIN_COMMANDS = USER_COMMANDS + [

@@ -76,8 +76,10 @@ try {
     throw "Host Ollama is not accessible on http://127.0.0.1:11434. Please start Ollama before starting Rentkom."
 }
 
-# 5. Start required Docker Compose services (idempotent, no-rebuild, preserves volumes)
+# 5. Build only FastAPI so tracked Python changes are loaded, then start services without rebuilding unrelated images.
 Write-Host "`n[2/6] Starting Core Docker Containers (Connected Profile)..." -ForegroundColor Yellow
+docker compose --profile connected build business-api
+if ($LASTEXITCODE -ne 0) { throw "FastAPI image build failed." }
 docker compose --profile connected up -d --no-build postgres business-api qdrant grafana n8n
 if ($LASTEXITCODE -ne 0) { throw "docker compose up failed." }
 
@@ -202,3 +204,8 @@ try {
 } catch {}
 Write-Host ""
 Write-Host "STATUS: READY" -ForegroundColor Green
+try {
+    & $PythonExe "$ProjectRoot\tools\notify_telegram_lifecycle.py" startup
+} catch {
+    Write-Host "WARNING: Startup notification was not delivered." -ForegroundColor Yellow
+}

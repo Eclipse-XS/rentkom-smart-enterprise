@@ -30,6 +30,7 @@ from core.schemas import (
     TelegramModeControlResponse,
 )
 import os
+from html import escape
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -71,31 +72,31 @@ def set_telegram_bot_mode(mode: str, db: Session) -> tuple[str, bool]:
 
 LR2_REPLY_KEYBOARD = {
     "keyboard": [[
-        {"text": "Процес купівлі/продажу"},
-        {"text": "Послуги для орендодавців"},
+        {"text": "🏠 Купівля та продаж"},
+        {"text": "🔑 Орендодавцям"},
     ]],
     "resize_keyboard": True,
 }
 LR6_REPLY_KEYBOARD_REMOVE = {"remove_keyboard": True}
-MODE_SELECTOR_TEXT = "Оберіть режим роботи Telegram-бота:"
+MODE_SELECTOR_TEXT = "🔄 <b>Режим роботи</b>\n\nОберіть сценарій для Telegram-асистента:"
 MODE_SELECTOR_KEYBOARD = {
     "inline_keyboard": [[
-        {"text": "Сценарний режим (LR2)", "callback_data": "mode:LR2"},
-        {"text": "AI-консультант (LR6)", "callback_data": "mode:LR6"},
+        {"text": "📋 Сценарний режим (LR2)", "callback_data": "mode:LR2"},
+        {"text": "🤖 AI-консультант (LR6)", "callback_data": "mode:LR6"},
     ]]
 }
 LR3_NOTIFICATIONS_KEY = "lr3_telegram_notifications_enabled"
 NOTIFICATIONS_KEYBOARD = {
     "inline_keyboard": [[
-        {"text": "Увімкнути сповіщення", "callback_data": "notifications:ON"},
-        {"text": "Вимкнути сповіщення", "callback_data": "notifications:OFF"},
+        {"text": "🔔 Увімкнути", "callback_data": "notifications:ON"},
+        {"text": "🔕 Вимкнути", "callback_data": "notifications:OFF"},
     ]]
 }
 ADMIN_KEYBOARD = {"inline_keyboard": [
-    [{"text": "Режим бота", "callback_data": "admin:mode"}],
-    [{"text": "Сповіщення", "callback_data": "admin:notifications"}],
-    [{"text": "Ресурси", "callback_data": "admin:resources"}],
-    [{"text": "Оновити стан", "callback_data": "admin:refresh"}],
+    [{"text": "🔄 Режим бота", "callback_data": "admin:mode"}],
+    [{"text": "🔔 Сповіщення", "callback_data": "admin:notifications"}],
+    [{"text": "🔗 Ресурси", "callback_data": "admin:resources"}],
+    [{"text": "↻ Оновити стан", "callback_data": "admin:refresh"}],
 ]}
 MODE_NOTIFICATION_TEXT = {
     "LR2": (
@@ -143,14 +144,16 @@ def set_lr3_notifications_enabled(enabled: bool, db: Session) -> bool:
 
 
 def notifications_status_text(enabled: bool) -> str:
-    return f"Сповіщення ЛР3: {'увімкнено' if enabled else 'вимкнено'}."
+    status = "✅ увімкнено" if enabled else "⛔ вимкнено"
+    return f"🔔 <b>Адміністративні сповіщення</b>\n\nСповіщення про нові відгуки: {status}."
 
 
 def admin_panel_text(db: Session) -> str:
+    notification_status = "✅ увімкнено" if get_lr3_notifications_enabled(db) else "⛔ вимкнено"
     return (
-        "Rentkom — Адміністрування\n\n"
-        f"Поточний глобальний режим: {get_telegram_bot_mode(db)}\n"
-        f"Сповіщення адміністратора: {'ON' if get_lr3_notifications_enabled(db) else 'OFF'}"
+        "🛠️ <b>Панель адміністратора Rentkom</b>\n\n"
+        f"🔄 Режим асистента: <b>{get_telegram_bot_mode(db)}</b>\n"
+        f"🔔 Сповіщення про відгуки: {notification_status}"
     )
 
 
@@ -177,8 +180,8 @@ def build_resources_menu(is_admin: bool) -> tuple[str, Dict[str, Any]]:
     rows = []
     unavailable = []
     public_resources = (
-        ("Залишити відгук", settings.LR3_FEEDBACK_FORM_URL),
-        ("Записатися на консультацію", settings.LR4_CONSULTATION_FORM_URL),
+        ("📝 Залишити відгук", settings.LR3_FEEDBACK_FORM_URL),
+        ("📅 Записатися на консультацію", settings.LR4_CONSULTATION_FORM_URL),
     )
     for label, configured_url in public_resources:
         url = _safe_resource_url(configured_url)
@@ -187,12 +190,12 @@ def build_resources_menu(is_admin: bool) -> tuple[str, Dict[str, Any]]:
         else:
             unavailable.append(label)
 
-    lines = ["Rentkom | Корисні посилання"]
+    lines = ["🔗 <b>Корисні ресурси Rentkom</b>", "", "Оберіть потрібну дію:"]
     if unavailable:
         lines.append("Недоступно: " + ", ".join(unavailable) + ".")
 
     if is_admin:
-        lines.extend(["", "Дані та аналітика"])
+        lines.extend(["", "📊 <b>Дані та аналітика</b>"])
         data_resources = (
             ("Google Sheets: відгуки", settings.LR3_SHEET_URL),
             ("Google Sheets: заявки", settings.LR4_SHEET_URL),
@@ -207,25 +210,23 @@ def build_resources_menu(is_admin: bool) -> tuple[str, Dict[str, Any]]:
         if missing_admin:
             lines.append("Недоступно: " + ", ".join(missing_admin) + ".")
 
-        lines.extend(["", "Інфраструктура"])
+        lines.extend(["", "⚙️ <b>Локальна інфраструктура</b>"])
         infrastructure = (
             ("Grafana", settings.GRAFANA_URL),
             ("n8n", settings.N8N_URL),
             ("FastAPI Swagger", settings.FASTAPI_DOCS_URL),
             ("Qdrant Dashboard", settings.QDRANT_DASHBOARD_URL),
         )
-        local_labels = []
         unavailable_infrastructure = []
         for label, configured_url in infrastructure:
             url = _safe_resource_url(configured_url)
             if not url:
                 unavailable_infrastructure.append(label)
-            elif _is_local_resource(url):
-                local_labels.append(label)
             else:
-                rows.append([{"text": label, "url": url}])
-        if local_labels:
-            lines.append("Локальний доступ: " + ", ".join(local_labels) + ".")
+                icon = {"Grafana": "📊", "n8n": "🔄", "FastAPI Swagger": "📘", "Qdrant Dashboard": "🗂️"}[label]
+                lines.append(f"{icon} {label}: <code>{escape(url)}</code>")
+                if not _is_local_resource(url):
+                    rows.append([{"text": f"{icon} {label}", "url": url}])
         if unavailable_infrastructure:
             lines.append("Не налаштовано: " + ", ".join(unavailable_infrastructure) + ".")
 
@@ -307,9 +308,11 @@ async def telegram_mode_control(
         "SHOW_FEEDBACK_FORM": settings.LR3_FEEDBACK_FORM_URL,
     }
     if req.action in public_form_actions:
-        text = public_form_actions[req.action]
+        url = _safe_resource_url(public_form_actions[req.action])
+        heading = "📅 <b>Запис на консультацію</b>" if req.action == "SHOW_CONSULTATION_FORM" else "📝 <b>Залишити відгук</b>"
+        text = f"{heading}\n\n{escape(url)}" if url else f"{heading}\n\n⚠️ Посилання наразі не налаштовано."
         if not req.is_test:
-            sent = await _telegram_api("sendMessage", {"chat_id": req.chat_id, "text": text})
+            sent = await _telegram_api("sendMessage", {"chat_id": req.chat_id, "text": text, "parse_mode": "HTML"})
             message_id = (sent.get("result") or {}).get("message_id")
         else:
             message_id = None
@@ -335,7 +338,7 @@ async def telegram_mode_control(
             message_id = None
         else:
             sent = await _telegram_api("sendMessage", {
-                "chat_id": req.chat_id, "text": text, "reply_markup": reply_markup,
+                "chat_id": req.chat_id, "text": text, "reply_markup": reply_markup, "parse_mode": "HTML",
             })
             message_id = (sent.get("result") or {}).get("message_id")
         return TelegramModeControlResponse(
@@ -344,11 +347,24 @@ async def telegram_mode_control(
             response_text=text, reply_markup=reply_markup,
         )
 
+    if req.action == "SHOW_HELP":
+        if req.is_test:
+            message_id = None
+        else:
+            sent = await _telegram_api("sendMessage", {
+                "chat_id": req.chat_id, "text": HELP_TEXT, "parse_mode": "HTML",
+            })
+            message_id = (sent.get("result") or {}).get("message_id")
+        return TelegramModeControlResponse(
+            status="HELP_SENT", action=req.action, authorized=authorized,
+            notification_message_id=message_id, response_text=HELP_TEXT,
+        )
+
     if not authorized:
         return TelegramModeControlResponse(
             status="FORBIDDEN", action=req.action, authorized=False,
             callback_answered=callback_answered,
-            response_text="Недостатньо прав.",
+            response_text="🔒 <b>Доступ заборонено</b>\n\nЦя команда доступна лише адміністратору.",
         )
 
     if req.action == "SHOW_SELECTOR":
@@ -357,7 +373,7 @@ async def telegram_mode_control(
         else:
             sent = await _telegram_api(
                 "sendMessage",
-                {"chat_id": req.chat_id, "text": MODE_SELECTOR_TEXT, "reply_markup": MODE_SELECTOR_KEYBOARD},
+                {"chat_id": req.chat_id, "text": MODE_SELECTOR_TEXT, "reply_markup": MODE_SELECTOR_KEYBOARD, "parse_mode": "HTML"},
             )
             message_id = (sent.get("result") or {}).get("message_id")
         return TelegramModeControlResponse(
@@ -373,12 +389,12 @@ async def telegram_mode_control(
         elif req.action == "REFRESH_ADMIN" and req.message_id:
             await _telegram_api("editMessageText", {
                 "chat_id": req.chat_id, "message_id": req.message_id,
-                "text": text, "reply_markup": ADMIN_KEYBOARD,
+                "text": text, "reply_markup": ADMIN_KEYBOARD, "parse_mode": "HTML",
             })
             message_id = req.message_id
         else:
             sent = await _telegram_api("sendMessage", {
-                "chat_id": req.chat_id, "text": text, "reply_markup": ADMIN_KEYBOARD,
+                "chat_id": req.chat_id, "text": text, "reply_markup": ADMIN_KEYBOARD, "parse_mode": "HTML",
             })
             message_id = (sent.get("result") or {}).get("message_id")
         return TelegramModeControlResponse(
@@ -388,9 +404,9 @@ async def telegram_mode_control(
         )
 
     if req.action == "DEPRECATED_COMMAND":
-        text = "Команди /mode lr2 та /mode lr6 застаріли. Використовуйте /mode."
+        text = "ℹ️ <b>Керування режимом оновлено</b>\n\nВикористовуйте команду /mode та кнопки вибору."
         if not req.is_test:
-            sent = await _telegram_api("sendMessage", {"chat_id": req.chat_id, "text": text})
+            sent = await _telegram_api("sendMessage", {"chat_id": req.chat_id, "text": text, "parse_mode": "HTML"})
             message_id = (sent.get("result") or {}).get("message_id")
         else:
             message_id = None
@@ -405,7 +421,7 @@ async def telegram_mode_control(
         if not req.is_test:
             sent = await _telegram_api(
                 "sendMessage",
-                {"chat_id": req.chat_id, "text": text, "reply_markup": NOTIFICATIONS_KEYBOARD},
+                {"chat_id": req.chat_id, "text": text, "reply_markup": NOTIFICATIONS_KEYBOARD, "parse_mode": "HTML"},
             )
             message_id = (sent.get("result") or {}).get("message_id")
         else:
@@ -430,6 +446,7 @@ async def telegram_mode_control(
                         "message_id": req.message_id,
                         "text": text,
                         "reply_markup": NOTIFICATIONS_KEYBOARD,
+                        "parse_mode": "HTML",
                     },
                 )
             message_id = req.message_id
@@ -447,7 +464,7 @@ async def telegram_mode_control(
     target_mode = req.callback_data.split(":", 1)[1]
     updated, changed = set_telegram_bot_mode(target_mode, db)
     if not changed:
-        text = f"Режим {updated} вже активний. Зміни не потрібні."
+        text = f"ℹ️ <b>Режим {updated} уже активний</b>\n\nЗміни не потрібні."
         return TelegramModeControlResponse(
             status="UNCHANGED", action=req.action, mode=updated, changed=False,
             authorized=True, callback_answered=callback_answered,
@@ -562,10 +579,20 @@ class TelegramResponseMock(BaseModel):
     is_duplicate: bool = False
 
 
-START_MENU_TEXT = """Вітаємо у навчальному чат-боті агентства нерухомості «Рентком»!
+HELP_TEXT = (
+    "ℹ️ <b>Допомога</b>\n\n"
+    "Використовуйте кнопки меню або команди:\n"
+    "• /start — головне меню;\n"
+    "• /resources — корисні ресурси;\n"
+    "• /feedback — залишити відгук;\n"
+    "• /consultation — записатися на консультацію."
+)
+
+START_MENU_TEXT = """🏡 <b>Rentkom — асистент з нерухомості</b>
+
 Оберіть потрібний розділ:"""
 
-BUY_PROCESS_TEXT = """Процес купівлі/продажу:
+BUY_PROCESS_TEXT = """🏠 <b>Купівля та продаж нерухомості</b>
 
 1. Звернення та визначення потреб: бюджет, район, тип об'єкта, площа, кількість кімнат і строки.
 2. Підбір об'єктів за визначеними критеріями.
@@ -576,7 +603,7 @@ BUY_PROCESS_TEXT = """Процес купівлі/продажу:
 7. Підготовка угоди: за потреби завдаток, договір, нотаріальне оформлення та розрахунок.
 8. Передача об'єкта і ключів, завершення угоди."""
 
-RENT_SERVICES_TEXT = """Послуги для орендодавців у навчальному сценарії:
+RENT_SERVICES_TEXT = """🔑 <b>Послуги для орендодавців</b>
 
 • консультація та визначення умов здачі;
 • підготовка і презентація об'єкта;
@@ -587,7 +614,7 @@ RENT_SERVICES_TEXT = """Послуги для орендодавців у нав
 • супровід укладення договору та передачі об'єкта;
 • подальша комунікація й координація питань у межах управління об'єктом."""
 
-FALLBACK_TEXT = "Вибачте, сервіс консультацій тимчасово недоступний. Будь ласка, зверніться до нашого чергового рієлтора за телефоном +38 (032) 240-00-00."
+FALLBACK_TEXT = "⚠️ <b>Консультація тимчасово недоступна</b>\n\nСпробуйте повторити запит пізніше."
 
 
 async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Session] = None) -> TelegramResponseMock:
@@ -628,12 +655,22 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
         user_id_val = message.get("from", {}).get("id") or 0
         is_admin_update = _is_authorized_telegram_admin(user_id_val, chat_id_val, chat_type_val)
         admin_command = text_content.lower()
-        if admin_command in ("/admin", "/mode", "/notifications", "/resources"):
+        if admin_command in ("/admin", "/mode", "/notifications", "/resources", "/help", "/feedback", "/consultation"):
             if admin_command == "/resources":
                 text, markup = build_resources_menu(is_admin_update)
                 res = TelegramResponseMock(route="Resources", response_text=text, reply_markup=markup)
+            elif admin_command == "/help":
+                res = TelegramResponseMock(route="Help", response_text=HELP_TEXT)
+            elif admin_command in ("/feedback", "/consultation"):
+                configured = settings.LR3_FEEDBACK_FORM_URL if admin_command == "/feedback" else settings.LR4_CONSULTATION_FORM_URL
+                url = _safe_resource_url(configured)
+                title = "📝 <b>Залишити відгук</b>" if admin_command == "/feedback" else "📅 <b>Запис на консультацію</b>"
+                res = TelegramResponseMock(
+                    route="Public Form",
+                    response_text=f"{title}\n\n{escape(url)}" if url else f"{title}\n\n⚠️ Посилання наразі не налаштовано.",
+                )
             elif not is_admin_update:
-                res = TelegramResponseMock(route="Access Denied", response_text="Недостатньо прав.")
+                res = TelegramResponseMock(route="Access Denied", response_text="🔒 <b>Доступ заборонено</b>\n\nЦя команда доступна лише адміністратору.")
             elif admin_command == "/admin":
                 res = TelegramResponseMock(route="Admin Panel", response_text=admin_panel_text(db), reply_markup=ADMIN_KEYBOARD)
             elif admin_command == "/mode":
@@ -650,7 +687,7 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
         elif admin_command.startswith("/mode"):
             res = TelegramResponseMock(
                 route="Deprecated Admin Command" if is_admin_update else "Access Denied",
-                response_text="Команди /mode lr2 та /mode lr6 застаріли. Використовуйте /mode." if is_admin_update else "Недостатньо прав.",
+                response_text="ℹ️ <b>Керування режимом оновлено</b>\n\nВикористовуйте /mode та кнопки вибору." if is_admin_update else "🔒 <b>Доступ заборонено</b>\n\nЦя команда доступна лише адміністратору.",
             )
         elif active_mode == "LR2":
             # PURE LR2 EXECUTION MODE
@@ -660,12 +697,12 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
                     response_text=START_MENU_TEXT,
                     reply_markup=LR2_REPLY_KEYBOARD
                 )
-            elif any(k in text_content.lower() for k in ["процес купівлі", "купівл"]):
+            elif any(k in text_content.lower() for k in ["процес купівлі", "купівл", "🏠 купівля"]):
                 res = TelegramResponseMock(
                     route="Купівля/Продаж",
                     response_text=BUY_PROCESS_TEXT,
                 )
-            elif any(k in text_content.lower() for k in ["орендодавц", "послуги для орендодавців"]):
+            elif any(k in text_content.lower() for k in ["орендодавц", "послуги для орендодавців", "🔑 орендодавцям"]):
                 res = TelegramResponseMock(
                     route="Орендодавцям",
                     response_text=RENT_SERVICES_TEXT,
@@ -675,11 +712,8 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
                 res = TelegramResponseMock(
                     route="LR2 Fallback",
                     response_text=(
-                        "Не вдалося розпізнати запит.\n\n"
-                        "Я можу надати інформацію про:\n"
-                        "• процес купівлі/продажу;\n"
-                        "• послуги для орендодавців.\n\n"
-                        "Будь ласка, скористайтеся кнопками меню нижче."
+                        "❓ <b>Запит не розпізнано</b>\n\n"
+                        "Оберіть розділ за допомогою кнопок меню або надішліть /help."
                     ),
                     reply_markup=LR2_REPLY_KEYBOARD
                 )
@@ -690,8 +724,8 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
                 res = TelegramResponseMock(
                     route="LR6 AI Greeting",
                     response_text=(
-                        "Вітаю! Я інформаційний помічник агентства нерухомості «Рентком» (м. Львів).\n\n"
-                        "Я можу відповісти за матеріалами корпоративної бази знань про:\n"
+                        "🤖 <b>AI-консультант Rentkom</b>\n\n"
+                        "Відповідаю за матеріалами бази знань про:\n"
                         "• купівлю житла та 6-етапну перевірку документів;\n"
                         "• порядок підписання договорів та нотаріальне посвідчення;\n"
                         "• умови типового договору оренди;\n"
@@ -703,9 +737,11 @@ async def process_telegram_update(update: TelegramUpdateMock, db: Optional[Sessi
             else:
                 try:
                     rag_out = await query_rag(text_content)
+                    sources = [escape(str(source)) for source in (rag_out.sources or [])]
+                    source_block = f"\n\n📚 <b>Джерела</b>\n" + "\n".join(f"• {source}" for source in sources) if sources else ""
                     res = TelegramResponseMock(
                         route="AI RAG Agent",
-                        response_text=rag_out.answer,
+                        response_text=f"💬 <b>Відповідь Rentkom</b>\n\n{escape(rag_out.answer)}{source_block}",
                         sources=rag_out.sources,
                         confidence_score=rag_out.confidence_score
                     )
@@ -883,6 +919,8 @@ async def acquire_telegram_inbox_guard(
         mode_action = "SHOW_NOTIFICATIONS"
     elif normalized_text == "/resources":
         mode_action = "SHOW_RESOURCES"
+    elif normalized_text == "/help":
+        mode_action = "SHOW_HELP"
     elif normalized_text == "/consultation":
         mode_action = "SHOW_CONSULTATION_FORM"
     elif normalized_text == "/feedback":

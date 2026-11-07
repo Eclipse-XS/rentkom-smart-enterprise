@@ -46,7 +46,7 @@ def test_int_t01_live_webhook_valid_secret_succeeds(client, monkeypatch):
     assert resp.status_code == 200
     data = resp.json()
     assert data["route"] == "Start Menu"
-    assert "Рентком" in data["response_text"]
+    assert "Rentkom" in data["response_text"]
 
 
 def test_int_t02_live_webhook_invalid_secret_returns_403(client, monkeypatch):

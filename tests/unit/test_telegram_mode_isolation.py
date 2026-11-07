@@ -57,8 +57,8 @@ async def test_lr2_mode_isolation_and_keyboard(db_session):
     assert res1.reply_markup is not None
     assert "keyboard" in res1.reply_markup
     keyboard_texts = [btn["text"] for row in res1.reply_markup["keyboard"] for btn in row]
-    assert "Процес купівлі/продажу" in keyboard_texts
-    assert "Послуги для орендодавців" in keyboard_texts
+    assert "🏠 Купівля та продаж" in keyboard_texts
+    assert "🔑 Орендодавцям" in keyboard_texts
 
     # 2. Buying process
     up2 = TelegramUpdateMock(
@@ -67,7 +67,7 @@ async def test_lr2_mode_isolation_and_keyboard(db_session):
     )
     res2 = await process_telegram_update(up2, db=db_session)
     assert res2.route == "Купівля/Продаж"
-    assert "Процес купівлі/продажу" in res2.response_text
+    assert "Купівля та продаж нерухомості" in res2.response_text
 
     # 3. Landlord services
     up3 = TelegramUpdateMock(
@@ -85,7 +85,7 @@ async def test_lr2_mode_isolation_and_keyboard(db_session):
     )
     res4 = await process_telegram_update(up4, db=db_session)
     assert res4.route == "LR2 Fallback"
-    assert "Не вдалося розпізнати запит" in res4.response_text
+    assert "Запит не розпізнано" in res4.response_text
     assert res4.reply_markup is not None
     assert "keyboard" in res4.reply_markup
     assert res4.sources is None
@@ -107,7 +107,7 @@ async def test_lr6_mode_isolation_and_rag(db_session):
     )
     res1 = await process_telegram_update(up1, db=db_session)
     assert res1.route == "LR6 AI Greeting"
-    assert "інформаційний помічник" in res1.response_text
+    assert "AI-консультант Rentkom" in res1.response_text
     assert res1.reply_markup == {"remove_keyboard": True}
 
     # 2. Query containing 'купівлі' - in LR6, it MUST route to AI RAG, NOT LR2 static text!
@@ -165,7 +165,7 @@ async def test_legacy_admin_mode_argument_is_deprecated(db_session):
     )
     res_admin = await process_telegram_update(up_admin, db=db_session)
     assert res_admin.route == "Deprecated Admin Command"
-    assert "застаріли" in res_admin.response_text
+    assert "Керування режимом оновлено" in res_admin.response_text
     assert get_telegram_bot_mode(db_session) == "LR2"
 
     # Non-admin user cannot invoke administrator routing.
@@ -200,5 +200,5 @@ async def test_repeated_admin_mode_command_does_not_repeat_keyboard_notification
         db=db_session,
     )
     assert result.route == "Deprecated Admin Command"
-    assert "застаріли" in result.response_text
+    assert "Керування режимом оновлено" in result.response_text
     assert result.reply_markup is None

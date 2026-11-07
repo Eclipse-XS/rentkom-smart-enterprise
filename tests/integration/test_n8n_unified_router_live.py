@@ -103,7 +103,7 @@ def test_router_scenario_1_start_menu():
     assert status == 200
     st, resp_text = wait_for_inbox_completion(up_id, timeout_sec=15)
     assert st == "COMPLETED"
-    assert "Рентком" in resp_text or "Вітаємо" in resp_text
+    assert "Rentkom" in resp_text
 
 
 @pytest.mark.integration
@@ -111,11 +111,11 @@ def test_router_scenario_2_buying_process():
     """Verify buying button routes to Buying Process Handler in LR2 mode."""
     _require_live_n8n()
     _set_bot_mode("LR2")
-    up_id, status, _ = send_to_router("🏢 Процес купівлі/продажу")
+    up_id, status, _ = send_to_router("🏠 Купівля та продаж")
     assert status == 200
     st, resp_text = wait_for_inbox_completion(up_id, timeout_sec=15)
     assert st == "COMPLETED"
-    assert "Процес купівлі" in resp_text
+    assert "Купівля та продаж нерухомості" in resp_text
 
 
 @pytest.mark.integration
