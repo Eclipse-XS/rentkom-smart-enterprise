@@ -339,7 +339,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: $json.answer ? '💬 <b>Відповідь Rentkom</b>\\n\\n' + String($json.answer).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + ($json.sources && $json.sources.length ? '\\n\\n📚 <b>Джерела</b>\\n' + $json.sources.map(s => '• ' + String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')).join('\\n') : '') : '⚠️ <b>Консультація тимчасово недоступна</b>\\n\\nСпробуйте повторити запит пізніше.', parse_mode: 'HTML' } }}",
+        "jsonBody": "={{ { chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, text: $json.answer ? 'Відповідь Rentkom\\n\\n' + String($json.answer) + ($json.sources && $json.sources.length ? '\\n\\nДжерела\\n' + $json.sources.map(s => '- ' + String(s)).join('\\n') : '') : 'Консультація тимчасово недоступна.\\n\\nСпробуйте повторити запит пізніше.' } }}",
         "options": {
           "timeout": 15000
         },

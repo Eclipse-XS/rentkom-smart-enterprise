@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen3:4b-instruct")
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "mxbai-embed-large:latest")
-    RAG_NUM_PREDICT: int = int(os.getenv("RAG_NUM_PREDICT", "384"))
+    RAG_NUM_PREDICT: int = int(os.getenv("RAG_NUM_PREDICT", "256"))
     RAG_MIN_SIMILARITY: float = float(os.getenv("RAG_MIN_SIMILARITY", "0.55"))
     QDRANT_HOST: str = os.getenv("QDRANT_HOST", "127.0.0.1")
     QDRANT_PORT: int = int(os.getenv("QDRANT_PORT", "6333"))
