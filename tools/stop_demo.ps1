@@ -23,15 +23,17 @@ try {
 
 # 2. Stop Docker Compose containers gracefully
 Write-Host "`n[2/2] Stopping Docker Containers (Preserving Volumes & Data)..." -ForegroundColor Yellow
-try {
-    & $PythonExe "$ProjectRoot\tools\notify_telegram_lifecycle.py" shutdown
-} catch {
-    Write-Host "WARN Shutdown notification was not delivered." -ForegroundColor Yellow
-}
 docker compose --profile connected stop n8n grafana business-api qdrant postgres
 if ($LASTEXITCODE -ne 0) {
     Write-Host "FAIL Failed to stop one or more demo containers." -ForegroundColor Red
     exit 1
+}
+
+# The exact shutdown message is sent only after Docker confirms the services stopped.
+try {
+    & $PythonExe "$ProjectRoot\tools\notify_telegram_lifecycle.py" shutdown
+} catch {
+    Write-Host "WARN Shutdown notification was not delivered." -ForegroundColor Yellow
 }
 
 Write-Host "`n============================================================" -ForegroundColor Cyan

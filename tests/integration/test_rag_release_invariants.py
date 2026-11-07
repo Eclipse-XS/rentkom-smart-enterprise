@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Tests for Phase 8 / RAG Gate:
-RAG-01: Multi-document retrieval quality, candidate K expansion, source-diversified selection
+RAG-01: Multi-document retrieval quality, candidate K expansion, relevance-window selection
 RAG-02: Strict grounding, citation validation, and evaluation methodology audit
 """
 import pytest
@@ -24,17 +24,17 @@ from core.config import settings
 @pytest.mark.anyio
 async def test_rag_t01_multi_document_source_diversified_retrieval():
     """
-    RAG-T01: Multi-document queries retrieve candidates with K=12 and round-robin source diversification.
-    Verifies that chunks from distinct qualifying documents are selected rather than being crowded out
-    by multiple chunks from a single dominant document.
+    RAG-T01: Multi-document queries retrieve candidates with K=12 and a strict relevance window.
+    Verifies weakly related documents are not presented as supporting evidence and a relevant
+    secondary source is retained.
     """
     mock_vector = [0.1] * 1024
     mock_qdrant_points = [
-        {"id": "c1", "score": 0.85, "payload": {"document_name": "Doc_A.pdf", "content": "Doc A chunk 1"}},
-        {"id": "c2", "score": 0.84, "payload": {"document_name": "Doc_A.pdf", "content": "Doc A chunk 2"}},
+        {"id": "c1", "score": 0.85, "payload": {"document_name": "Doc_A.pdf", "content": "Документи для купівлі"}},
+        {"id": "c2", "score": 0.84, "payload": {"document_name": "Doc_A.pdf", "content": "Перевірка документів"}},
         {"id": "c3", "score": 0.83, "payload": {"document_name": "Doc_A.pdf", "content": "Doc A chunk 3"}},
         {"id": "c4", "score": 0.82, "payload": {"document_name": "Doc_A.pdf", "content": "Doc A chunk 4"}},
-        {"id": "c5", "score": 0.78, "payload": {"document_name": "Doc_B.docx", "content": "Doc B chunk 1"}},
+        {"id": "c5", "score": 0.78, "payload": {"document_name": "Doc_B.docx", "content": "Документи купівлі: як оформити акт"}},
         {"id": "c6", "score": 0.76, "payload": {"document_name": "Doc_B.docx", "content": "Doc B chunk 2"}},
         {"id": "c7", "score": 0.72, "payload": {"document_name": "Doc_C.pdf", "content": "Doc C chunk 1"}},
         {"id": "c8", "score": 0.50, "payload": {"document_name": "Doc_D.pdf", "content": "Below threshold"}},
@@ -63,16 +63,16 @@ async def test_rag_t01_multi_document_source_diversified_retrieval():
 
         assert resp.mode == "grounded"
         assert resp.confidence_score == 0.85
-        # Under source diversification, all 3 distinct qualifying documents are selected
+        # Documents within 0.08 of the best hit remain; weaker evidence is excluded.
         assert "Doc_A.pdf" in resp.sources
         assert "Doc_B.docx" in resp.sources
-        assert "Doc_C.pdf" in resp.sources
+        assert "Doc_C.pdf" not in resp.sources
         # Sub-threshold document is excluded
         assert "Doc_D.pdf" not in resp.sources
 
-        # Citations contain representations from Doc A, Doc B, and Doc C
+        # Citations contain only the strong supporting documents.
         cited_docs = {c.document_name for c in resp.citations}
-        assert {"Doc_A.pdf", "Doc_B.docx", "Doc_C.pdf"}.issubset(cited_docs)
+        assert cited_docs == {"Doc_A.pdf", "Doc_B.docx"}
 
 
 @pytest.mark.anyio

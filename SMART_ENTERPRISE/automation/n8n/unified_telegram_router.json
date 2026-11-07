@@ -312,7 +312,9 @@
         "jsonBody": "={{ { question: $('Acquire Telegram Inbox Guard').item.json.text, session_id: String($('Acquire Telegram Inbox Guard').item.json.chat_id), typing_chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id } }}",
         "options": {
           "timeout": 90000
-        }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "u-node-rag-core",
       "name": "Query RAG Core API",
@@ -321,7 +323,13 @@
       "position": [
         1320,
         260
-      ]
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "RentkomInternalAuth",
+          "name": "Rentkom Internal Auth"
+        }
+      }
     },
     {
       "parameters": {

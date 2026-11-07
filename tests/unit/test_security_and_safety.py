@@ -286,19 +286,23 @@ def test_rag_endpoint_rate_limiting(client, monkeypatch):
     rag_payload = {"question": "Які послуги надає агентство?"}
 
     # 2 requests succeed
-    r1 = client.post("/api/v1/rag/ask", json=rag_payload)
+    auth_headers = {"X-Internal-Token": settings.INTERNAL_API_KEY}
+    r1 = client.post("/api/v1/rag/ask", json=rag_payload, headers=auth_headers)
     assert r1.status_code == 200
-    r2 = client.post("/api/v1/rag/ask", json=rag_payload)
+    r2 = client.post("/api/v1/rag/ask", json=rag_payload, headers=auth_headers)
     assert r2.status_code == 200
 
     # 3rd request is blocked with 429 and Retry-After
-    r3 = client.post("/api/v1/rag/ask", json=rag_payload)
+    r3 = client.post("/api/v1/rag/ask", json=rag_payload, headers=auth_headers)
     assert r3.status_code == 429
     assert "RAG rate limit exceeded" in r3.json()["detail"]
     assert "retry-after" in r3.headers
 
     # Spoofing X-Forwarded-For does not bypass RAG limiter
-    r_spoof = client.post("/api/v1/rag/ask", json=rag_payload, headers={"X-Forwarded-For": "8.8.8.8"})
+    r_spoof = client.post(
+        "/api/v1/rag/ask", json=rag_payload,
+        headers={**auth_headers, "X-Forwarded-For": "8.8.8.8"},
+    )
     assert r_spoof.status_code == 429
 
     rag_rate_limiter.reset()

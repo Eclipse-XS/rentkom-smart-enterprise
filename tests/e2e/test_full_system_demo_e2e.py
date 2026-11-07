@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from core.main import app
+from core.config import settings
 from core.database import get_db, Base
 from core.schemas import ServiceRequestCreate
 from core.services.outbox_service import process_outbox
@@ -156,9 +157,11 @@ def test_scenario_2_unified_router_qdrant_ollama_real_rag(real_pg_session):
     assert "Купівля та продаж нерухомості" in buy_data["response_text"]
 
     # 3. Legal/RAG query via real Qdrant and real Ollama
-    rag_resp = client.post("/api/v1/rag/ask", json={
-        "question": "Скільки етапів перевірки документів визначено у регламенті агентства?"
-    })
+    rag_resp = client.post(
+        "/api/v1/rag/ask",
+        json={"question": "Скільки етапів перевірки документів визначено у регламенті агентства?"},
+        headers={"X-Internal-Token": settings.INTERNAL_API_KEY},
+    )
     assert rag_resp.status_code == 200
     rag_data = rag_resp.json()
     if rag_data.get("mode") == "fallback":

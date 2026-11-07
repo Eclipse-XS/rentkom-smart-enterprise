@@ -143,10 +143,32 @@ class SourceCitation(BaseModel):
     score: float = 0.0
 
 class RAGQueryRequest(BaseModel):
-    question: str = Field(..., min_length=2)
-    conversation_history: Optional[List[Dict[str, str]]] = None
-    session_id: Optional[str] = Field(None, max_length=100)
+    question: str = Field(..., min_length=2, max_length=1000)
+    conversation_history: Optional[List[Dict[str, str]]] = Field(None, max_length=12)
+    session_id: Optional[str] = Field(None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9:_-]+$")
     typing_chat_id: Optional[int] = None
+
+    @field_validator("question")
+    @classmethod
+    def normalize_question(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 2:
+            raise ValueError("Question must contain at least two non-whitespace characters")
+        return value
+
+    @field_validator("conversation_history")
+    @classmethod
+    def validate_history(cls, value: Optional[List[Dict[str, str]]]):
+        if value is None:
+            return value
+        cleaned = []
+        for item in value:
+            role = item.get("role")
+            content = item.get("content", "").strip()
+            if role not in ("user", "assistant") or not content or len(content) > 2000:
+                raise ValueError("History items require role user/assistant and content up to 2000 characters")
+            cleaned.append({"role": role, "content": content})
+        return cleaned
 
 class RAGQueryResponse(BaseModel):
     answer: str

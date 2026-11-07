@@ -551,7 +551,7 @@ async def evaluate_dataset(
         "p50_latency_seconds": p50,
         "p95_latency_seconds": p95,
         "metric_methodology_classification": {
-            "retrieval": "Deterministic document membership check in top-K (k=3). Multi-document requires ALL sources.",
+            "retrieval": "Deterministic document membership check in the bounded returned evidence set (up to four chunks). Multi-document requires ALL expected sources.",
             "claim_correctness": "Heuristic proxy: requires co-occurrence of key proposition anchors and verifies absence of contradictory negations. Evaluated against complete un-truncated answer text. NOT formal NLI.",
             "citation_entailment": "Heuristic proxy: strictly requires returned SourceCitation objects with score >= 0.55 and source document alignment. Missing citation objects strictly fail. NOT human-verified logical entailment."
         },
@@ -562,9 +562,8 @@ async def evaluate_dataset(
             "notes": [
                 f"Execution mode: {run_mode_label} (is_cached={is_cached_run}).",
                 "Matching cosine similarity alone does not guarantee factual claim correctness.",
-                "Q14 and Q23 generated grounded answers despite missing primary source in top-K due to domain guidance in system prompt.",
-                "Q22 abstained on colloquial phrasing because retrieved chunk scores were below 0.55 threshold (safe abstention).",
-                "Q07 retrieved correct source and answered factually, but missed exact expected keyword stems due to phrasing variations.",
+                "Retrieval and claim metrics are dataset expectations and heuristic proxies; inspect per-question results for current misses.",
+                "Tail latency includes live Ollama model scheduling and partial CPU execution on the measured host.",
                 "5/5 prompt injections were blocked by boundary tags and pattern guards, but this does not prove universal defense against novel multi-turn jailbreaks."
             ]
         },
