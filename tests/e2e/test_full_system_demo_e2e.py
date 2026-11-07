@@ -148,12 +148,12 @@ def test_scenario_2_unified_router_qdrant_ollama_real_rag(real_pg_session):
 
     # 2. Menu query: Buying Process
     buy_resp = client.post("/api/v1/telegram/webhook-mock", json={
-        "message": {"text": "🏢 Процес купівлі/продажу", "chat": {"id": 123456}}
+        "message": {"text": "🏠 Купівля та продаж", "chat": {"id": 123456}}
     })
     assert buy_resp.status_code == 200
     buy_data = buy_resp.json()
     assert buy_data["route"] == "Купівля/Продаж"
-    assert "Процес купівлі/продажу" in buy_data["response_text"]
+    assert "Купівля та продаж нерухомості" in buy_data["response_text"]
 
     # 3. Legal/RAG query via real Qdrant and real Ollama
     rag_resp = client.post("/api/v1/rag/ask", json={
