@@ -28,6 +28,7 @@ STATE_FILE = RUNTIME_DIR / "tunnel_state.json"
 LOCK_FILE = RUNTIME_DIR / "tunnel_supervisor.lock"
 LOG_FILE = RUNTIME_DIR / "cloudflared.log"
 WEBHOOK_PATH = "/webhook/rentkom-telegram-ingress-webhook"
+REQUIRED_ALLOWED_UPDATES = {"message", "callback_query"}
 DEFAULT_LOCAL_TARGET = "http://127.0.0.1:8765"
 INGRESS_SCRIPT = PROJECT_ROOT / "tools" / "restricted_ingress.py"
 URL_PATTERN = re.compile(
@@ -409,6 +410,9 @@ def webhook_status(tunnel_url):
         return False, {}, f"getWebhookInfo failed: {exc}"
     if info.get("url") != expected:
         return False, info, "registered URL does not match the active tunnel"
+    missing_updates = REQUIRED_ALLOWED_UPDATES - set(info.get("allowed_updates") or [])
+    if missing_updates:
+        return False, info, f"missing allowed_updates: {', '.join(sorted(missing_updates))}"
     if info.get("last_error_date"):
         return False, info, info.get("last_error_message") or "Telegram reports a delivery error"
     return True, info, "URL matches and Telegram reports no delivery error"
@@ -424,9 +428,10 @@ def sync_telegram_webhook(tunnel_url):
         current = get_telegram_webhook_info()
     except Exception as exc:
         return False, f"getWebhookInfo failed: {exc}"
-    if current.get("url") != desired or current.get("last_error_date"):
+    missing_updates = REQUIRED_ALLOWED_UPDATES - set(current.get("allowed_updates") or [])
+    if current.get("url") != desired or current.get("last_error_date") or missing_updates:
         payload = {"url": desired,
-                   "allowed_updates": current.get("allowed_updates") or ["message", "callback_query"]}
+                   "allowed_updates": sorted(REQUIRED_ALLOWED_UPDATES)}
         if secret:
             payload["secret_token"] = secret
         request = urllib.request.Request(f"https://api.telegram.org/bot{token}/setWebhook",

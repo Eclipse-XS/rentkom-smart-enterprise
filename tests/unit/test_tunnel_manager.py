@@ -130,8 +130,28 @@ def test_sync_preserves_pending_updates_and_allowed_updates(monkeypatch):
         ok, _ = manage_tunnel.sync_telegram_webhook("https://new.trycloudflare.com")
     assert ok
     body = json.loads(calls[1].data)
-    assert body["allowed_updates"] == ["message", "callback_query"]
+    assert set(body["allowed_updates"]) == {"message", "callback_query"}
     assert "drop_pending_updates" not in body
+
+
+def test_sync_repairs_missing_callback_query_when_url_matches(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_SECRET_TOKEN", "secret")
+    desired = f"https://new.trycloudflare.com{manage_tunnel.WEBHOOK_PATH}"
+    responses = [
+        {"ok": True, "result": {"url": desired, "allowed_updates": ["message"]}},
+        {"ok": True, "result": True},
+        {"ok": True, "result": {"url": desired, "allowed_updates": ["message", "callback_query"]}},
+    ]
+    calls = []
+    def urlopen(request, timeout):
+        calls.append(request)
+        return _response(responses.pop(0))
+    with patch("tools.manage_tunnel.urllib.request.urlopen", side_effect=urlopen), \
+            patch.object(manage_tunnel, "save_state"), patch.object(manage_tunnel, "load_state", return_value={}):
+        ok, _ = manage_tunnel.sync_telegram_webhook("https://new.trycloudflare.com")
+    assert ok
+    assert json.loads(calls[1].data)["allowed_updates"] == ["callback_query", "message"]
 
 
 def test_webhook_registration_failure(monkeypatch):
