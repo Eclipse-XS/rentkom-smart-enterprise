@@ -6,6 +6,7 @@ from core.services.rag_service import (
     normalize_query_for_retrieval,
     sanitize_retrieved_chunk,
     STRICT_SYSTEM_PROMPT,
+    critical_consistency_issue,
 )
 from core.config import settings
 
@@ -179,3 +180,55 @@ def test_rag_evaluation_dataset_has_30_questions_across_5_categories():
 def test_generated_answer_is_normalized_for_telegram_plain_text():
     raw = "\\### \\*\\*Умови\\*\\*&#x20;\n\\---"
     assert rag_service.normalize_generated_answer(raw) == "Умови"
+
+
+@pytest.mark.parametrize("question,answer,issue", [
+    ("Як придбати квартиру?", "Покупець укладає договір купівлі з орендодавцем.", "purchase_with_landlord"),
+    ("Як придбати квартиру?", "Після перевірки встановіть угоду з орендодавцем.", "purchase_with_landlord"),
+    ("Як придбати квартиру?", "Нотаріус у підготовці угоди не виконує жодних функцій.", "notary_role_denied"),
+    ("Як проходить купівля?", "У цій операції не потрібен нотаріус.", "notary_role_denied"),
+    ("Що дає оренда?", "Після оренди право власності переходить орендарю.", "rental_as_ownership_transfer"),
+    ("Чи повернуть завдаток?", "Завдаток у будь-якому разі повертається покупцю.", "unconditional_or_contradictory_deposit_advice"),
+    ("Чи повернуть завдаток?", "Як правило, завдаток вертається покупцю.", "unconditional_or_contradictory_deposit_advice"),
+    ("Чи вертають завдаток, якщо покупець відмовився?", "Так, завдаток вертається, якщо покупець відмовився від угоди.", "unconditional_or_contradictory_deposit_advice"),
+])
+def test_critical_domain_contradictions_cover_alternative_word_order(question, answer, issue):
+    assert critical_consistency_issue(question, answer) == issue
+
+
+def test_consistent_purchase_and_conditional_deposit_answers_are_allowed():
+    assert critical_consistency_issue(
+        "Як придбати житло у Львові?",
+        "Після перевірки документів нотаріус посвідчує договір купівлі-продажу.",
+    ) is None
+    assert critical_consistency_issue(
+        "Чи повертають завдаток?",
+        "Наслідки залежать від письмових умов договору та причин невиконання зобов'язання.",
+    ) is None
+
+
+@pytest.mark.anyio
+async def test_critical_contradiction_gets_one_bounded_regeneration(monkeypatch):
+    class DummyResp:
+        def __init__(self, data): self.status_code = 200; self._data = data
+        def json(self): return self._data
+    class Client:
+        generate_calls = 0
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def post(self, url, **kwargs):
+            if "/api/embeddings" in url: return DummyResp({"embedding": [0.1]})
+            if "/points/search" in url:
+                return DummyResp({"result": [{"id": "1", "score": 0.8, "payload": {
+                    "content": "Нотаріус посвідчує договір купівлі-продажу.",
+                    "document_name": "Порядок_підписання_договору.docx"}}]})
+            Client.generate_calls += 1
+            if Client.generate_calls == 1:
+                return DummyResp({"response": "Нотаріус не виконує функцій під час купівлі.", "done_reason": "stop", "eval_count": 20})
+            return DummyResp({"response": "Нотаріус посвідчує договір купівлі-продажу.", "done_reason": "stop", "eval_count": 18})
+    monkeypatch.setattr(rag_service.httpx, "AsyncClient", Client)
+    response = await query_rag("Як придбати житло?")
+    assert Client.generate_calls == 2
+    assert response.mode == "grounded"
+    assert "посвідчує" in response.answer

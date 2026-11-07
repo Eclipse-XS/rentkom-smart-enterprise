@@ -134,6 +134,61 @@ def lexical_overlap(query: str, text: str) -> int:
     return len(query_terms & text_terms)
 
 
+def critical_consistency_issue(question: str, answer: str) -> Optional[str]:
+    """Detect a narrow set of high-impact domain contradictions; this is not factual proof."""
+    q = question.lower()
+    a = answer.lower()
+    purchase_context = any(term in q or term in a for term in ("купів", "купит", "придба", "покуп", "продаж"))
+    rental_context = any(term in q or term in a for term in ("оренд", "винайм", "найм", "орендар"))
+
+    if purchase_context:
+        for sentence in re.split(r"[.!?\n]+", a):
+            if "орендодав" in sentence and any(term in sentence for term in ("купів", "продаж", "придба", "покуп", "угод", "договор")):
+                return "purchase_with_landlord"
+            if "нотар" in sentence and (
+                re.search(r"нотар\w*[^.!?]{0,60}\bне\s+(?:викону|бере|має|потріб|посвідч|реєстр)", sentence)
+                or re.search(r"\bне\s+(?:потріб|бере|викону|посвідч)[^.!?]{0,60}нотар", sentence)
+                or "роль виникає лише після підписання" in sentence
+                or "без нотаріуса" in sentence
+            ):
+                return "notary_role_denied"
+
+    if rental_context and (
+        re.search(r"оренд\w*[^.!?]{0,80}(?:переда|переход|набува)[^.!?]{0,35}прав[ао]\s+власност", a)
+        or re.search(r"оренд\w*[^.!?]{0,60}прав[ао]\s+власност[^.!?]{0,35}(?:переда|переход|набува)", a)
+        or re.search(r"орендар\w*[^.!?]{0,50}(?:стає|є)\s+власник", a)
+    ):
+        return "rental_as_ownership_transfer"
+
+    if "завдат" in q or "завдат" in a:
+        buyer_refusal = bool(
+            re.search(r"покуп\w*[^.!?]{0,45}(?:відмов|відмова)", q)
+            or re.search(r"(?:відмов|відмова)[^.!?]{0,45}покуп", q)
+        )
+        claims_refund_for_refusal = bool(
+            re.search(r"завдат\w*[^.!?]{0,90}(?:поверт|верта|відновлю)", a)
+            and re.search(r"покуп\w*[^.!?]{0,55}(?:відмов|відмова)|(?:відмов|відмова)[^.!?]{0,55}покуп", a)
+        )
+        unconditional = re.search(
+            r"(?:завдат\w*[^.!?]{0,45}(?:завжди|у\s+будь-якому\s+разі|безумовно|як\s+правило)[^.!?]{0,35}(?:поверт|верта|не\s+поверт|залиша)|(?:як\s+правило)[^.!?]{0,35}завдат\w*[^.!?]{0,35}(?:поверт|верта|залиша))",
+            a,
+        )
+        returns = bool(re.search(r"завдат\w*[^.!?]{0,70}(?:повертається|повернути)", a))
+        retained = bool(re.search(r"завдат\w*[^.!?]{0,70}(?:не\s+повертається|залишається)", a))
+        if (buyer_refusal and claims_refund_for_refusal) or unconditional or (returns and retained and not any(x in a for x in ("залеж", "якщо", "відповідно до договор", "умов договор"))):
+            return "unconditional_or_contradictory_deposit_advice"
+    return None
+
+
+def consistency_abstention(question: str) -> str:
+    q = question.lower()
+    if "завдат" in q:
+        return "Надані матеріали не дозволяють однозначно визначити наслідки щодо завдатку без перевірки письмових умов конкретної угоди. Зверніться до профільного фахівця."
+    if any(term in q for term in ("купів", "купит", "придба", "покуп", "продаж", "нотар")):
+        return "Надані матеріали не дозволяють сформувати несуперечливу відповідь щодо оформлення купівлі нерухомості. Зверніться до нотаріуса або профільного фахівця."
+    return "Надані матеріали не дозволяють сформувати несуперечливу відповідь з цього питання. Зверніться до профільного фахівця."
+
+
 async def query_rag(
     question: str,
     history: Optional[List[Dict[str, str]]] = None,
@@ -344,6 +399,11 @@ async def query_rag(
             if llm_resp.status_code == 200:
                 llm_data = llm_resp.json()
                 completion_reason = llm_data.get("done_reason")
+                logger.info(
+                    "rag_generation_completed attempt=initial completion_reason=%s eval_count=%s",
+                    completion_reason,
+                    llm_data.get("eval_count"),
+                )
                 if completion_reason == "length":
                     raise RuntimeError("Ollama returned an incomplete generation")
                 ans_text = normalize_generated_answer(llm_data.get("response", ""))
@@ -369,6 +429,54 @@ async def query_rag(
                         latency_seconds=round(time.time() - start_time, 3),
                         mode="rejected"
                     )
+
+                issue = critical_consistency_issue(question, ans_text)
+                if issue:
+                    logger.warning("rag_consistency_retry issue=%s", issue)
+                    retry_resp = await client.post(
+                        f"{settings.OLLAMA_BASE_URL}/api/generate",
+                        json={
+                            "model": settings.OLLAMA_MODEL,
+                            "prompt": user_prompt + (
+                                "\n\n<correction_instruction>Попередня чернетка містила критичну предметну суперечність: "
+                                f"{issue}. Сформуй нову відповідь лише з тих самих доказів. "
+                                "Не змішуй купівлю з орендою, не заперечуй роль нотаріуса у купівлі та "
+                                "не давай безумовних висновків про повернення завдатку.</correction_instruction>"
+                            ),
+                            "system": STRICT_SYSTEM_PROMPT.replace(
+                                "+38 (032) 240-00-00",
+                                getattr(settings, "AGENCY_CONTACT_PHONE", "+38 (032) 240-00-00"),
+                            ),
+                            "stream": False,
+                            "think": False,
+                            "options": {
+                                "temperature": 0.1,
+                                "num_ctx": 3072,
+                                "num_predict": settings.RAG_NUM_PREDICT,
+                            },
+                        },
+                    )
+                    if retry_resp.status_code != 200:
+                        return RAGQueryResponse(
+                            answer=consistency_abstention(question), sources=[], citations=[],
+                            confidence_score=0.0, latency_seconds=round(time.time() - start_time, 3), mode="rejected"
+                        )
+                    retry_data = retry_resp.json()
+                    retry_reason = retry_data.get("done_reason")
+                    logger.info(
+                        "rag_generation_completed attempt=consistency_retry completion_reason=%s eval_count=%s",
+                        retry_reason,
+                        retry_data.get("eval_count"),
+                    )
+                    retry_text = normalize_generated_answer(retry_data.get("response", ""))
+                    retry_issue = critical_consistency_issue(question, retry_text)
+                    if retry_reason == "length" or not retry_text or retry_issue:
+                        logger.warning("rag_consistency_rejected issue=%s", retry_issue or retry_reason or "empty")
+                        return RAGQueryResponse(
+                            answer=consistency_abstention(question), sources=[], citations=[],
+                            confidence_score=0.0, latency_seconds=round(time.time() - start_time, 3), mode="rejected"
+                        )
+                    ans_text = retry_text
 
                 return RAGQueryResponse(
                     answer=ans_text,
