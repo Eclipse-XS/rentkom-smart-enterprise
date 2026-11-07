@@ -143,7 +143,7 @@ def test_scenario_2_unified_router_qdrant_ollama_real_rag(real_pg_session):
     assert start_resp.status_code == 200
     start_data = start_resp.json()
     assert start_data["route"] == "Start Menu"
-    assert "Вітаємо" in start_data["response_text"]
+    assert "Rentkom" in start_data["response_text"]
     assert "reply_markup" in start_data
 
     # 2. Menu query: Buying Process
