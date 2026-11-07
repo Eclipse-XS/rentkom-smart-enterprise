@@ -10,6 +10,12 @@ def _headers():
     return {"X-Internal-Token": settings.INTERNAL_API_KEY}
 
 
+def _session(question, user_id, chat_id=None, chat_type="private"):
+    chat_id = user_id if chat_id is None else chat_id
+    return {"question": question, "session_id": "telegram", "telegram_user_id": user_id,
+            "telegram_chat_id": chat_id, "telegram_chat_type": chat_type}
+
+
 def _response(answer="ok"):
     return RAGQueryResponse(
         answer=answer,
@@ -36,17 +42,17 @@ def test_rag_sessions_are_isolated_and_keys_do_not_expose_client_ids(client, db_
     monkeypatch.setattr(rag_endpoint, "query_rag", fake_query)
     first = client.post(
         "/api/v1/rag/ask",
-        json={"question": "Перше питання", "session_id": "1001"},
+        json=_session("Перше питання", 1001),
         headers=_headers(),
     )
     second = client.post(
         "/api/v1/rag/ask",
-        json={"question": "Інша сесія", "session_id": "2002"},
+        json=_session("Інша сесія", 2002),
         headers=_headers(),
     )
     follow_up = client.post(
         "/api/v1/rag/ask",
-        json={"question": "Уточнення", "session_id": "1001"},
+        json=_session("Уточнення", 1001),
         headers=_headers(),
     )
 
@@ -64,7 +70,7 @@ def test_typing_chat_must_match_telegram_session(client, monkeypatch):
     monkeypatch.setattr(rag_endpoint, "query_rag", AsyncMock(return_value=_response()))
     response = client.post(
         "/api/v1/rag/ask",
-        json={"question": "Питання", "session_id": "1001", "typing_chat_id": 2002},
+        json={**_session("Питання", 1001), "typing_chat_id": 2002},
         headers=_headers(),
     )
     assert response.status_code == 400
@@ -92,7 +98,7 @@ def test_expired_history_is_not_reused(client, db_session, monkeypatch):
     session_id = "expired-session"
     key = rag_endpoint._history_key(
         rag_endpoint.AuthenticatedActor(actor_id="internal-service", role="internal"),
-        session_id,
+        "telegram:private:3003:user:3003", session_id,
     )
     db_session.add(SystemConfig(
         key=key,
@@ -109,7 +115,7 @@ def test_expired_history_is_not_reused(client, db_session, monkeypatch):
     monkeypatch.setattr(rag_endpoint, "query_rag", fake_query)
     response = client.post(
         "/api/v1/rag/ask",
-        json={"question": "Нове питання", "session_id": session_id},
+        json={**_session("Нове питання", 3003), "session_id": session_id},
         headers=_headers(),
     )
 
@@ -118,3 +124,31 @@ def test_expired_history_is_not_reused(client, db_session, monkeypatch):
     db_session.expire_all()
     refreshed = db_session.get(SystemConfig, key)
     assert refreshed is None or "private old history" not in refreshed.value
+
+
+def test_internal_service_cannot_select_session_without_authenticated_telegram_identity(client):
+    response = client.post(
+        "/api/v1/rag/ask", json={"question": "Питання", "session_id": "victim"}, headers=_headers()
+    )
+    assert response.status_code == 400
+
+
+def test_private_chat_rejects_forged_mismatched_user(client):
+    response = client.post(
+        "/api/v1/rag/ask", json=_session("Питання", 1001, chat_id=2002), headers=_headers()
+    )
+    assert response.status_code == 400
+
+
+def test_group_sessions_are_isolated_per_user(client, monkeypatch):
+    histories = []
+    async def fake_query(_question, history=None):
+        histories.append(list(history or [])); return _response()
+    monkeypatch.setattr(rag_endpoint, "query_rag", fake_query)
+    for user, question in ((1001, "A first"), (2002, "B first"), (1001, "A follow")):
+        response = client.post(
+            "/api/v1/rag/ask", json=_session(question, user, chat_id=-900, chat_type="group"), headers=_headers()
+        )
+        assert response.status_code == 200
+    assert histories[0] == [] and histories[1] == []
+    assert histories[2][0]["content"] == "A first"

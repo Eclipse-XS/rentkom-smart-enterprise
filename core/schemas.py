@@ -147,6 +147,9 @@ class RAGQueryRequest(BaseModel):
     conversation_history: Optional[List[Dict[str, str]]] = Field(None, max_length=12)
     session_id: Optional[str] = Field(None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9:_-]+$")
     typing_chat_id: Optional[int] = None
+    telegram_user_id: Optional[int] = None
+    telegram_chat_id: Optional[int] = None
+    telegram_chat_type: Optional[str] = Field(None, pattern=r"^(private|group|supergroup|channel)$")
 
     @field_validator("question")
     @classmethod

@@ -11,6 +11,7 @@ import sys
 import time
 import urllib.request
 import urllib.parse
+import urllib.error
 import uuid
 from pathlib import Path
 
@@ -27,7 +28,8 @@ STATE_FILE = RUNTIME_DIR / "tunnel_state.json"
 LOCK_FILE = RUNTIME_DIR / "tunnel_supervisor.lock"
 LOG_FILE = RUNTIME_DIR / "cloudflared.log"
 WEBHOOK_PATH = "/webhook/rentkom-telegram-ingress-webhook"
-DEFAULT_LOCAL_TARGET = "http://127.0.0.1:5678"
+DEFAULT_LOCAL_TARGET = "http://127.0.0.1:8765"
+INGRESS_SCRIPT = PROJECT_ROOT / "tools" / "restricted_ingress.py"
 URL_PATTERN = re.compile(
     r"https://(?:[a-zA-Z0-9-]+\.trycloudflare\.com|[a-zA-Z0-9-]+\.lhr\.life)"
 )
@@ -165,10 +167,12 @@ def is_owned_tunnel(state, process_info=None):
             and "tunnel" in command and "--url" in command and target in command
         )
     elif provider == "localhost_run":
+        parsed = urllib.parse.urlparse(str(state.get("local_target") or DEFAULT_LOCAL_TARGET))
+        forward = f"80:{parsed.hostname}:{parsed.port}"
         signature_matches = (
             info.get("name", "").lower() in {"ssh", "ssh.exe"}
             and "nokey@localhost.run" in command
-            and "80:127.0.0.1:5678" in command
+            and forward in command
         )
     else:
         signature_matches = False
@@ -192,12 +196,36 @@ def terminate_pid(pid, force=False):
 
 def check_tunnel_health(base_url, timeout=8):
     try:
-        request = urllib.request.Request(f"{base_url.rstrip('/')}/healthz",
-                                         headers={"User-Agent": "RentkomTunnelCheck/1.0"})
+        request = urllib.request.Request(
+            f"{base_url.rstrip('/')}{WEBHOOK_PATH}", data=b"{}", method="POST",
+            headers={"Content-Type": "application/json", "User-Agent": "RentkomTunnelCheck/1.0"},
+        )
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status == 200
+    except urllib.error.HTTPError as exc:
+        return exc.code == 403
     except Exception:
         return False
+
+
+def start_restricted_ingress():
+    if tcp_endpoint_reachable("127.0.0.1", 8765, timeout=1):
+        return None
+    flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    process = subprocess.Popen(
+        [sys.executable, str(INGRESS_SCRIPT)], stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, creationflags=flags,
+    )
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if process.poll() is not None:
+            break
+        if tcp_endpoint_reachable("127.0.0.1", 8765, timeout=1):
+            return process.pid
+        time.sleep(0.2)
+    if process.poll() is None:
+        terminate_pid(process.pid, force=True)
+    raise RuntimeError("restricted ingress failed to start")
 
 
 def load_state():
@@ -216,7 +244,7 @@ def save_state(state):
 
 def detect_existing_tunnel():
     state = load_state()
-    if state and is_owned_tunnel(state):
+    if state and state.get("local_target") == DEFAULT_LOCAL_TARGET and is_owned_tunnel(state):
         url = state.get("url")
         if url and check_tunnel_health(url):
             return int(state["pid"]), url
@@ -437,6 +465,10 @@ def stop_tunnel():
         terminate_pid(state["supervisor_pid"], force=True)
     if is_owned_tunnel(state):
         terminate_pid(state["pid"], force=True)
+    if state.get("ingress_pid"):
+        info = get_process_info(state["ingress_pid"])
+        if info and "restricted_ingress.py" in info.get("command_line", "").lower():
+            terminate_pid(state["ingress_pid"], force=True)
     try:
         STATE_FILE.unlink(missing_ok=True)
     except OSError:
@@ -456,11 +488,13 @@ def run_supervisor(local_target=DEFAULT_LOCAL_TARGET):
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, request_stop)
     try:
+        ingress_pid = start_restricted_ingress()
         state = load_state() or {}
         supervisor_info = get_process_info(os.getpid()) or {}
         state.update({"owner_id": owner_id, "supervisor_pid": os.getpid(),
                       "supervisor_started_at": time.time(), "local_target": local_target,
-                      "supervisor_process_created": supervisor_info.get("created", "")})
+                      "supervisor_process_created": supervisor_info.get("created", ""),
+                      "ingress_pid": ingress_pid})
         save_state(state)  # ownership is recorded before network activity
         print(f"[*] Supervisor owns lock (PID: {os.getpid()})", flush=True)
         pid, url = detect_existing_tunnel()
@@ -480,6 +514,8 @@ def run_supervisor(local_target=DEFAULT_LOCAL_TARGET):
                 print(f"[{'OK' if ok else '!'}] Telegram webhook: {reason}", flush=True)
     finally:
         _cleanup_owned_child()
+        if "ingress_pid" in locals() and ingress_pid:
+            terminate_pid(ingress_pid, force=True)
         current = load_state() or {}
         if current.get("owner_id") == owner_id:
             try:

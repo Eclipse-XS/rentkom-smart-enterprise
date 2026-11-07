@@ -551,7 +551,7 @@ async def evaluate_dataset(
         "p50_latency_seconds": p50,
         "p95_latency_seconds": p95,
         "metric_methodology_classification": {
-            "retrieval": "Deterministic document membership check in the bounded returned evidence set (up to four chunks). Multi-document requires ALL expected sources.",
+            "retrieval": "Deterministic document membership check in the bounded returned evidence set (up to six chunks). Multi-document requires ALL expected sources.",
             "claim_correctness": "Heuristic proxy: requires co-occurrence of key proposition anchors and verifies absence of contradictory negations. Evaluated against complete un-truncated answer text. NOT formal NLI.",
             "citation_entailment": "Heuristic proxy: strictly requires returned SourceCitation objects with score >= 0.55 and source document alignment. Missing citation objects strictly fail. NOT human-verified logical entailment."
         },

@@ -186,7 +186,7 @@ async def query_rag(
                     qdrant_url = f"http://{settings.QDRANT_HOST}:{settings.QDRANT_PORT}/collections/{target_collection}/points/search"
                     qdrant_resp = await client.post(
                         qdrant_url,
-                        json={"vector": vector, "limit": 12, "with_payload": True}
+                        json={"vector": vector, "limit": 20, "with_payload": True}
                     )
                     if qdrant_resp.status_code == 200:
                         retrieval_succeeded = True
@@ -205,29 +205,47 @@ async def query_rag(
 
                         candidates.sort(key=lambda item: item[0], reverse=True)
                         best_adjusted = candidates[0][0] if candidates else 0.0
-                        # Keep only evidence close to the best hit. This avoids presenting weakly
-                        # related documents as proof while retaining at most two chunks per source.
-                        evidence_floor = max(settings.RAG_MIN_SIMILARITY, best_adjusted - 0.08)
+                        # Qualify a document by its strongest chunk, then select round-robin.
+                        # This preserves the relevance window without letting duplicate chunks
+                        # from the leading document consume the whole context budget.
+                        evidence_floor = max(settings.RAG_MIN_SIMILARITY, max_score - 0.08)
+                        qualified_documents = {
+                            (pt.get("payload", {}).get("document_name") or pt.get("payload", {}).get("source") or "")
+                            for _adjusted_score, pt in candidates
+                            if float(pt.get("score", 0.0)) >= evidence_floor
+                        }
                         selected_points = []
                         per_document: Dict[str, int] = {}
                         seen_content = set()
+                        unique_candidates = []
                         for adjusted_score, pt in candidates:
                             payload = pt.get("payload", {})
                             doc_name = payload.get("document_name") or payload.get("source") or ""
                             raw_text = payload.get("content") or payload.get("text") or ""
                             content_key = re.sub(r"\s+", " ", raw_text).strip().lower()
                             if (
-                                adjusted_score < evidence_floor
-                                or not doc_name
+                                not doc_name
+                                or doc_name not in qualified_documents
                                 or not content_key
                                 or content_key in seen_content
-                                or per_document.get(doc_name, 0) >= 2
                             ):
                                 continue
-                            selected_points.append(pt)
                             seen_content.add(content_key)
-                            per_document[doc_name] = per_document.get(doc_name, 0) + 1
-                            if len(selected_points) == 4:
+                            unique_candidates.append((adjusted_score, pt, doc_name))
+
+                        selected_candidate_indexes = set()
+                        for pass_number in (0, 1):
+                            for candidate_index, (_adjusted_score, pt, doc_name) in enumerate(unique_candidates):
+                                if candidate_index in selected_candidate_indexes:
+                                    continue
+                                if per_document.get(doc_name, 0) != pass_number:
+                                    continue
+                                selected_points.append(pt)
+                                selected_candidate_indexes.add(candidate_index)
+                                per_document[doc_name] = pass_number + 1
+                                if len(selected_points) == 6:
+                                    break
+                            if len(selected_points) == 6:
                                 break
 
                         for pt in selected_points:

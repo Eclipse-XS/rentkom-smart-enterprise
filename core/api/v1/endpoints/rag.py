@@ -18,9 +18,22 @@ MAX_HISTORY_MESSAGES = 12
 HISTORY_RETENTION_HOURS = 24
 
 
-def _history_key(actor: AuthenticatedActor, session_id: str) -> str:
-    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+def _history_key(actor: AuthenticatedActor, owner: str, session_id: str = "default") -> str:
+    digest = hashlib.sha256(f"{owner}:{session_id}".encode("utf-8")).hexdigest()
     return f"rag_history:{actor.role}:{digest}"
+
+
+def _telegram_owner(query: RAGQueryRequest) -> str:
+    values = (query.telegram_user_id, query.telegram_chat_id, query.telegram_chat_type)
+    if any(value is not None for value in values) and not all(value is not None for value in values):
+        raise HTTPException(status_code=400, detail="Telegram user, chat and chat type must be provided together")
+    if query.telegram_user_id is None:
+        raise HTTPException(status_code=400, detail="Authenticated Telegram identity is required for a session")
+    if query.telegram_chat_type == "private" and query.telegram_user_id != query.telegram_chat_id:
+        raise HTTPException(status_code=400, detail="Private Telegram chat must belong to the authenticated user")
+    if query.telegram_chat_type == "channel":
+        raise HTTPException(status_code=400, detail="Telegram channel sessions are not supported")
+    return f"telegram:{query.telegram_chat_type}:{query.telegram_chat_id}:user:{query.telegram_user_id}"
 
 
 def _is_history_expired(updated_at) -> bool:
@@ -58,7 +71,12 @@ async def ask_rag(
             SystemConfig.key.like("rag_history:%"),
             SystemConfig.updated_at < cutoff,
         ).delete(synchronize_session=False)
-        history_key = _history_key(actor, query.session_id)
+        owner = (
+            _telegram_owner(query)
+            if actor.role == "internal_service"
+            else f"admin:{actor.actor_id}"
+        )
+        history_key = _history_key(actor, owner, query.session_id)
         config_row = db.query(SystemConfig).filter(SystemConfig.key == history_key).first()
         if config_row:
             if _is_history_expired(config_row.updated_at):
@@ -73,10 +91,14 @@ async def ask_rag(
                     history = []
 
     if query.typing_chat_id is not None:
-        if not query.session_id or str(query.typing_chat_id) != query.session_id:
+        if (
+            actor.role != "internal_service"
+            or query.telegram_chat_id is None
+            or query.typing_chat_id != query.telegram_chat_id
+        ):
             raise HTTPException(
                 status_code=400,
-                detail="typing_chat_id must match the authenticated Telegram session_id",
+                detail="typing_chat_id must match the authenticated Telegram chat",
             )
 
     typing_task = None

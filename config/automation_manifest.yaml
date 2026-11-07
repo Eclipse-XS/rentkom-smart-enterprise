@@ -182,19 +182,19 @@ workflows:
       expected_status: 200
 
   # ----------------------------------------------------------------------------
-  # 4. Monitoring API (LR5 Legacy Webhook Bridge)
+  # 4. Monitoring API (LR5 Internal Webhook Bridge)
   # ----------------------------------------------------------------------------
   - id: LAB5MonitoringAPI1
     file: SMART_ENTERPRISE/automation/n8n/monitoring_api.json
     name: "LAB5 | Агентство нерухомості | Monitoring API"
-    business_capability: "LEGACY_MONITORING_BRIDGE"
-    description: "Exposes legacy n8n webhooks for Grafana. In Smart Enterprise, Grafana directly queries PostgreSQL and Business API, making this webhook bridge superseded."
-    expected_state: unpublished
-    required: false
+    business_capability: "GRAFANA_GOOGLE_SHEETS_ANALYTICS_BRIDGE"
+    description: "Internal-only bridge used by the provisioned Grafana rentkom-lr3-sheets datasource for customer-satisfaction panels. Public tunnel routing does not expose these paths."
+    expected_state: published
+    required: true
     trigger_type: webhook
     triggers:
       - name: "API популярності типів"
-        path: "lab5/property-types-popularity"
+        path: "lab5/property-popularity"
         method: GET
       - name: "API задоволеності клієнтів"
         path: "lab5/customer-satisfaction"
@@ -208,7 +208,7 @@ workflows:
     conflicts_with: []
     external_integration:
       provider: internal
-      status: superseded_by_native_grafana
+      status: required_internal_datasource
 
   # ----------------------------------------------------------------------------
   # 5. Rule-Based Fallback Bot (LR2 Legacy Prototype)

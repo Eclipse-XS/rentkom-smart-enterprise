@@ -309,7 +309,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { question: $('Acquire Telegram Inbox Guard').item.json.text, session_id: String($('Acquire Telegram Inbox Guard').item.json.chat_id), typing_chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id } }}",
+        "jsonBody": "={{ { question: $('Acquire Telegram Inbox Guard').item.json.text, session_id: 'telegram', typing_chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, telegram_user_id: $('Acquire Telegram Inbox Guard').item.json.telegram_user_id, telegram_chat_id: $('Acquire Telegram Inbox Guard').item.json.chat_id, telegram_chat_type: $('Acquire Telegram Inbox Guard').item.json.chat_type } }}",
         "options": {
           "timeout": 90000
         },

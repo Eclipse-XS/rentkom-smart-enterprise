@@ -20,7 +20,7 @@ def _owned_state(pid=10):
 
 def _cloudflared_info(pid=10, created="stamp"):
     return {"pid": pid, "name": "cloudflared.exe", "created": created,
-            "command_line": "cloudflared tunnel --url http://127.0.0.1:5678"}
+            "command_line": f"cloudflared tunnel --url {manage_tunnel.DEFAULT_LOCAL_TARGET}"}
 
 
 def test_health_requires_reachable_endpoint_not_stale_log():
@@ -71,6 +71,15 @@ def test_healthy_owned_tunnel_is_reused(monkeypatch):
     monkeypatch.setattr(manage_tunnel, "get_process_info", lambda pid: _cloudflared_info())
     monkeypatch.setattr(manage_tunnel, "check_tunnel_health", lambda url: True)
     assert manage_tunnel.detect_existing_tunnel() == (10, state["url"])
+
+
+def test_legacy_unrestricted_n8n_tunnel_is_not_reused(monkeypatch):
+    state = _owned_state()
+    state["local_target"] = "http://127.0.0.1:5678"
+    monkeypatch.setattr(manage_tunnel, "load_state", lambda: state)
+    monkeypatch.setattr(manage_tunnel, "get_process_info", lambda pid: _cloudflared_info())
+    monkeypatch.setattr(manage_tunnel, "check_tunnel_health", lambda url: True)
+    assert manage_tunnel.detect_existing_tunnel() == (None, None)
 
 
 def test_dns_failure_is_reported_and_only_spawned_pid_is_killed(monkeypatch, tmp_path):
@@ -213,7 +222,7 @@ def test_localhost_run_process_ownership_is_provider_specific():
     state = {"owner_id": "rentkom", "provider": "localhost_run", "pid": 88,
              "process_created": "stamp", "local_target": manage_tunnel.DEFAULT_LOCAL_TARGET}
     owned = {"pid": 88, "name": "ssh.exe", "created": "stamp",
-             "command_line": "ssh -T -R 80:127.0.0.1:5678 nokey@localhost.run"}
+             "command_line": "ssh -T -R 80:127.0.0.1:8765 nokey@localhost.run"}
     unrelated = dict(owned, command_line="ssh -R 80:127.0.0.1:9000 other@example.com")
     assert manage_tunnel.is_owned_tunnel(state, owned)
     assert not manage_tunnel.is_owned_tunnel(state, unrelated)
