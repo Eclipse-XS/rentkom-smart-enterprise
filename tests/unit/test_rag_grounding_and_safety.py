@@ -174,3 +174,8 @@ def test_rag_evaluation_dataset_has_30_questions_across_5_categories():
     assert categories.get("unsupported_out_of_domain", 0) >= 5
     assert categories.get("colloquial_paraphrase", 0) >= 5
     assert categories.get("adversarial_prompt_injection", 0) >= 5
+
+
+def test_generated_answer_is_normalized_for_telegram_plain_text():
+    raw = "\\### \\*\\*Умови\\*\\*&#x20;\n\\---"
+    assert rag_service.normalize_generated_answer(raw) == "Умови"

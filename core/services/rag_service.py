@@ -1,5 +1,6 @@
 import time
 import re
+import html
 import httpx
 from typing import List, Dict, Any, Optional
 from core.schemas import RAGQueryResponse, SourceCitation
@@ -24,6 +25,16 @@ def get_fallback_response() -> str:
 
 ABSTENTION_RESPONSE = get_abstention_response()
 FALLBACK_RESPONSE = get_fallback_response()
+
+
+def normalize_generated_answer(text: str) -> str:
+    """Convert model formatting artifacts to Telegram-safe plain text."""
+    text = html.unescape(text)
+    text = re.sub(r"\\([\\`*_{}\[\]()#+\-.!>])", r"\1", text)
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", text)
+    text = re.sub(r"(?m)^\s*-{3,}\s*$", "", text)
+    text = text.replace("**", "").replace("__", "")
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def normalize_query_for_retrieval(query: str) -> str:
@@ -324,7 +335,7 @@ async def query_rag(
                 }
             )
             if llm_resp.status_code == 200:
-                ans_text = llm_resp.json().get("response", "").strip()
+                ans_text = normalize_generated_answer(llm_resp.json().get("response", ""))
                 if "<think>" in ans_text and "</think>" in ans_text:
                     ans_text = ans_text.split("</think>")[-1].strip()
                 ans_text = re.sub(r"\[(Джерело|Регламент|Source)[^\]]*\]", "", ans_text, flags=re.IGNORECASE).strip()
