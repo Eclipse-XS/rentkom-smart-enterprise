@@ -1,10 +1,13 @@
 import time
 import re
 import html
+import logging
 import httpx
 from typing import List, Dict, Any, Optional
 from core.schemas import RAGQueryResponse, SourceCitation
 from core.config import settings
+
+logger = logging.getLogger(__name__)
 
 def get_abstention_response() -> str:
     phone = getattr(settings, "AGENCY_CONTACT_PHONE", "+38 (032) 240-00-00")
@@ -182,6 +185,7 @@ async def query_rag(
     max_score = 0.0
     retrieval_succeeded = False
 
+    completion_reason = None
     try:
         prior_user_context = " ".join(
             item.get("content", "") for item in (history or [])[-4:]
@@ -339,7 +343,8 @@ async def query_rag(
             )
             if llm_resp.status_code == 200:
                 llm_data = llm_resp.json()
-                if llm_data.get("done_reason") == "length":
+                completion_reason = llm_data.get("done_reason")
+                if completion_reason == "length":
                     raise RuntimeError("Ollama returned an incomplete generation")
                 ans_text = normalize_generated_answer(llm_data.get("response", ""))
                 if "<think>" in ans_text and "</think>" in ans_text:
@@ -373,8 +378,14 @@ async def query_rag(
                     latency_seconds=round(time.time() - start_time, 3),
                     mode="grounded"
                 )
-    except Exception:
-        pass
+    except Exception as exc:
+        safe_message = re.sub(r"[\r\n\t]+", " ", str(exc))[:300]
+        logger.error(
+            "rag_generation_failed exception_type=%s error=%s completion_reason=%s",
+            type(exc).__name__,
+            safe_message,
+            completion_reason,
+        )
 
     # Fallback response if LLM generation failed
     return RAGQueryResponse(
