@@ -6,14 +6,14 @@ from core.api.v1.endpoints.telegram import get_mode_notification, set_telegram_b
 
 
 EXPECTED_LR2_TEXT = (
-    "🔄 Режим переключено на ЛР2: Сценарний чат-бот агентства «Рентком».\n\n"
-    "Сценарні кнопки активовано. Виберіть потрібний розділ меню нижче:"
+    "🔄 <b>Режим змінено: LR2</b>\n\n"
+    "📋 <b>Сценарний помічник Rentkom активований</b>\n\n"
+    "Оберіть потрібний розділ за допомогою кнопок нижче."
 )
 EXPECTED_LR6_TEXT = (
-    "🔄 Режим переключено на ЛР6: Інтелектуальний RAG AI-консультант агентства «Рентком» "
-    "(база знань Qdrant + Ollama qwen3:4b-instruct).\n\n"
-    "Сценарну клавіатуру вимкнено. Ви можете ставити будь-які запитання щодо купівлі, "
-    "оренди, перевірки документів або правил агентства."
+    "🔄 <b>Режим змінено: LR6</b>\n\n"
+    "🤖 <b>AI-консультант Rentkom активований</b>\n\n"
+    "Можете ставити запитання щодо купівлі, оренди, документів і послуг агентства."
 )
 
 
@@ -165,6 +165,7 @@ def test_mode_callback_answers_and_switches_to_lr6(client):
     assert data["callback_answered"] is True
     assert [call[0] for call in calls] == ["answerCallbackQuery", "sendMessage"]
     assert calls[1][1]["text"] == EXPECTED_LR6_TEXT
+    assert calls[1][1]["parse_mode"] == "HTML"
     assert calls[1][1]["reply_markup"] == {"remove_keyboard": True}
     assert client.get("/api/v1/telegram/mode").json()["mode"] == "LR6"
 
@@ -183,7 +184,32 @@ def test_repeated_callback_is_unchanged_without_activation_message(client, db_se
             json=_mode_control_payload("SELECT_MODE", "mode:LR6"), headers=_auth_headers(),
         )
     assert response.json()["status"] == "UNCHANGED"
-    assert "Зміни не потрібні" in calls[1][1]["text"]
+    assert response.json()["notification_message_id"] is None
+    assert [call[0] for call in calls] == ["answerCallbackQuery"]
+
+
+def test_successful_then_repeated_callback_sends_exactly_one_confirmation(client):
+    calls = []
+
+    async def telegram_result(method, payload):
+        calls.append((method, payload))
+        return {"ok": True, "result": {"message_id": 504}}
+
+    with patch("core.api.v1.endpoints.telegram._telegram_api", side_effect=telegram_result):
+        first = client.post(
+            "/api/v1/telegram/mode/telegram-control",
+            json=_mode_control_payload("SELECT_MODE", "mode:LR6"), headers=_auth_headers(),
+        )
+        repeated = client.post(
+            "/api/v1/telegram/mode/telegram-control",
+            json=_mode_control_payload("SELECT_MODE", "mode:LR6"), headers=_auth_headers(),
+        )
+
+    assert first.json()["status"] == "SUCCESS"
+    assert repeated.json()["status"] == "UNCHANGED"
+    confirmations = [payload for method, payload in calls if method == "sendMessage"]
+    assert len(confirmations) == 1
+    assert confirmations[0]["text"] == EXPECTED_LR6_TEXT
 
 
 def test_mode_callback_rejects_wrong_telegram_user(client):

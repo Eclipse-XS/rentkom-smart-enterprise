@@ -99,14 +99,14 @@ ADMIN_KEYBOARD = {"inline_keyboard": [
 ]}
 MODE_NOTIFICATION_TEXT = {
     "LR2": (
-        "🔄 Режим переключено на ЛР2: Сценарний чат-бот агентства «Рентком».\n\n"
-        "Сценарні кнопки активовано. Виберіть потрібний розділ меню нижче:"
+        "🔄 <b>Режим змінено: LR2</b>\n\n"
+        "📋 <b>Сценарний помічник Rentkom активований</b>\n\n"
+        "Оберіть потрібний розділ за допомогою кнопок нижче."
     ),
     "LR6": (
-        "🔄 Режим переключено на ЛР6: Інтелектуальний RAG AI-консультант агентства «Рентком» "
-        "(база знань Qdrant + Ollama qwen3:4b-instruct).\n\n"
-        "Сценарну клавіатуру вимкнено. Ви можете ставити будь-які запитання щодо купівлі, "
-        "оренди, перевірки документів або правил агентства."
+        "🔄 <b>Режим змінено: LR6</b>\n\n"
+        "🤖 <b>AI-консультант Rentkom активований</b>\n\n"
+        "Можете ставити запитання щодо купівлі, оренди, документів і послуг агентства."
     ),
 }
 
@@ -240,7 +240,12 @@ async def send_mode_notification(chat_id: int, mode: str) -> Optional[int]:
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.post(
             f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "reply_markup": reply_markup},
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "reply_markup": reply_markup,
+                "parse_mode": "HTML",
+            },
         )
     if response.status_code != 200:
         raise RuntimeError(f"Telegram API rejected notification (HTTP {response.status_code})")
@@ -443,15 +448,10 @@ async def telegram_mode_control(
     updated, changed = set_telegram_bot_mode(target_mode, db)
     if not changed:
         text = f"Режим {updated} вже активний. Зміни не потрібні."
-        if not req.is_test:
-            sent = await _telegram_api("sendMessage", {"chat_id": req.chat_id, "text": text})
-            message_id = (sent.get("result") or {}).get("message_id")
-        else:
-            message_id = None
         return TelegramModeControlResponse(
             status="UNCHANGED", action=req.action, mode=updated, changed=False,
             authorized=True, callback_answered=callback_answered,
-            notification_message_id=message_id, response_text=text,
+            notification_message_id=None, response_text=text,
         )
 
     text, reply_markup = get_mode_notification(updated)
@@ -461,7 +461,12 @@ async def telegram_mode_control(
         try:
             sent = await _telegram_api(
                 "sendMessage",
-                {"chat_id": req.chat_id, "text": text, "reply_markup": reply_markup},
+                {
+                    "chat_id": req.chat_id,
+                    "text": text,
+                    "reply_markup": reply_markup,
+                    "parse_mode": "HTML",
+                },
             )
             message_id = (sent.get("result") or {}).get("message_id")
         except Exception as exc:
