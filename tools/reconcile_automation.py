@@ -13,6 +13,7 @@ import time
 import urllib.request
 import urllib.error
 import subprocess
+import tempfile
 from pathlib import Path
 
 # Ensure project root in sys.path
@@ -70,6 +71,39 @@ def get_n8n_workflows_state():
     return states
 
 
+def _workflow_content(workflow):
+    """Canonical executable content; excludes n8n-generated version metadata."""
+    if isinstance(workflow, list):
+        workflow = workflow[0]
+    return {
+        "name": workflow.get("name"),
+        "nodes": workflow.get("nodes", []),
+        "connections": workflow.get("connections", {}),
+        "settings": workflow.get("settings", {}),
+    }
+
+
+def deployed_workflow_matches(workflow_id, repository_file):
+    container_export = f"/tmp/rentkom-reconcile-{workflow_id}.json"
+    export_res = run_cmd([
+        "docker", "exec", N8N_CONTAINER, "n8n", "export:workflow",
+        f"--id={workflow_id}", f"--output={container_export}",
+    ], check=False)
+    if export_res.returncode != 0:
+        return False
+    with tempfile.TemporaryDirectory(prefix="rentkom-reconcile-") as temp_dir:
+        host_export = Path(temp_dir) / "workflow.json"
+        copy_res = run_cmd([
+            "docker", "cp", f"{N8N_CONTAINER}:{container_export}", str(host_export)
+        ], check=False)
+        run_cmd(["docker", "exec", N8N_CONTAINER, "rm", "-f", container_export], check=False)
+        if copy_res.returncode != 0 or not host_export.is_file():
+            return False
+        deployed = json.loads(host_export.read_text(encoding="utf-8"))
+    repository = json.loads((PROJECT_ROOT / repository_file).read_text(encoding="utf-8"))
+    return _workflow_content(deployed) == _workflow_content(repository)
+
+
 def reconcile_workflows(manifest):
     print("=== Step 1: Reconciling Credentials & Workflows from Manifest ===")
 
@@ -92,6 +126,29 @@ def reconcile_workflows(manifest):
         expected_state = wf.get("expected_state", "unpublished").lower()
         should_be_active = (expected_state == "published")
         w_name = wf.get("name")
+
+        if wf.get("reconcile_content", False):
+            repository_workflow = json.loads((PROJECT_ROOT / w_file).read_text(encoding="utf-8"))
+            if repository_workflow.get("id") != w_id:
+                raise RuntimeError(f"Workflow {w_file} must declare manifest id {w_id} before content reconciliation")
+
+        if wf.get("reconcile_content", False) and w_id in current_states and not deployed_workflow_matches(w_id, w_file):
+            print(f"[*] Updating drifted workflow '{w_name}' ({w_id}) from repository content...")
+            if current_states[w_id]:
+                unpub_res = run_cmd([
+                    "docker", "exec", N8N_CONTAINER, "n8n", "unpublish:workflow", f"--id={w_id}"
+                ], check=False)
+                if unpub_res.returncode != 0:
+                    raise RuntimeError(f"Cannot unpublish drifted required workflow {w_id}")
+            container_path = f"/workflows/{Path(w_file).name}"
+            import_res = run_cmd([
+                "docker", "exec", N8N_CONTAINER, "n8n", "import:workflow", f"--input={container_path}"
+            ], check=False)
+            if import_res.returncode != 0:
+                raise RuntimeError(f"Cannot update drifted workflow {w_id}: {import_res.stderr or import_res.stdout}")
+            current_states[w_id] = False
+            workflows_to_change = True
+            print(f"[OK] Updated executable content for '{w_name}'")
 
         # Check if imported
         if w_id not in current_states:

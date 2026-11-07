@@ -170,7 +170,7 @@ def test_mode_callback_answers_and_switches_to_lr6(client):
     assert client.get("/api/v1/telegram/mode").json()["mode"] == "LR6"
 
 
-def test_repeated_callback_is_unchanged_without_activation_message(client, db_session):
+def test_repeated_callback_is_unchanged_with_visible_confirmation(client, db_session):
     set_telegram_bot_mode("LR6", db_session)
     calls = []
 
@@ -184,11 +184,12 @@ def test_repeated_callback_is_unchanged_without_activation_message(client, db_se
             json=_mode_control_payload("SELECT_MODE", "mode:LR6"), headers=_auth_headers(),
         )
     assert response.json()["status"] == "UNCHANGED"
-    assert response.json()["notification_message_id"] is None
-    assert [call[0] for call in calls] == ["answerCallbackQuery"]
+    assert response.json()["notification_message_id"] == 503
+    assert [call[0] for call in calls] == ["answerCallbackQuery", "sendMessage"]
+    assert "уже активний" in calls[1][1]["text"]
 
 
-def test_successful_then_repeated_callback_sends_exactly_one_confirmation(client):
+def test_successful_then_repeated_callback_sends_change_and_visible_unchanged_confirmation(client):
     calls = []
 
     async def telegram_result(method, payload):
@@ -208,8 +209,9 @@ def test_successful_then_repeated_callback_sends_exactly_one_confirmation(client
     assert first.json()["status"] == "SUCCESS"
     assert repeated.json()["status"] == "UNCHANGED"
     confirmations = [payload for method, payload in calls if method == "sendMessage"]
-    assert len(confirmations) == 1
+    assert len(confirmations) == 2
     assert confirmations[0]["text"] == EXPECTED_LR6_TEXT
+    assert "уже активний" in confirmations[1]["text"]
 
 
 def test_mode_callback_rejects_wrong_telegram_user(client):
@@ -237,7 +239,7 @@ def test_inbox_guard_normalizes_and_deduplicates_mode_callback(client):
         "callback_query": {
             "id": "callback-guard-1",
             "from": {"id": int(settings.TELEGRAM_ADMIN_USER_ID)},
-            "message": {"chat": {"id": int(settings.TELEGRAM_ADMIN_CHAT_ID)}},
+            "message": {"chat": {"id": int(settings.TELEGRAM_ADMIN_CHAT_ID), "type": "private"}},
             "data": "mode:LR6",
         },
     }
@@ -249,4 +251,5 @@ def test_inbox_guard_normalizes_and_deduplicates_mode_callback(client):
     assert first.json()["mode_action"] == "SELECT_MODE"
     assert first.json()["callback_query_id"] == "callback-guard-1"
     assert first.json()["telegram_user_id"] == int(settings.TELEGRAM_ADMIN_USER_ID)
+    assert first.json()["chat_type"] == "private"
     assert second.json()["action"] == "DROP_DUPLICATE"

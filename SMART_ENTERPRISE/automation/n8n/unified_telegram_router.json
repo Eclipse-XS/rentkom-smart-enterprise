@@ -329,7 +329,8 @@
           "id": "RentkomInternalAuth",
           "name": "Rentkom Internal Auth"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {

@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends, Header, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from core.database import get_db
 from core.services.rag_service import query_rag
 from core.services.telegram_idempotency import telegram_idempotency, CachedResponse
@@ -465,10 +466,17 @@ async def telegram_mode_control(
     updated, changed = set_telegram_bot_mode(target_mode, db)
     if not changed:
         text = f"ℹ️ <b>Режим {updated} уже активний</b>\n\nЗміни не потрібні."
+        message_id = None
+        if not req.is_test:
+            sent = await _telegram_api(
+                "sendMessage",
+                {"chat_id": req.chat_id, "text": text, "parse_mode": "HTML"},
+            )
+            message_id = (sent.get("result") or {}).get("message_id")
         return TelegramModeControlResponse(
             status="UNCHANGED", action=req.action, mode=updated, changed=False,
             authorized=True, callback_answered=callback_answered,
-            notification_message_id=None, response_text=text,
+            notification_message_id=message_id, response_text=text,
         )
 
     text, reply_markup = get_mode_notification(updated)
@@ -490,7 +498,8 @@ async def telegram_mode_control(
             logger.error("[MODE] Persisted %s but callback notification failed: %s", updated, exc)
             return TelegramModeControlResponse(
                 status="PARTIAL_SUCCESS", action=req.action, mode=updated, changed=True,
-                authorized=True, callback_answered=callback_answered, response_text=str(exc),
+                authorized=True, callback_answered=callback_answered,
+                response_text="Режим змінено, але підтвердження тимчасово не доставлено.",
             )
     return TelegramModeControlResponse(
         status="SUCCESS", action=req.action, mode=updated, changed=True,
@@ -886,6 +895,17 @@ async def acquire_telegram_inbox_guard(
                 status_code=403,
                 detail="Forbidden: invalid internal service authorization."
             )
+
+    # Expired leases are failures, not active work. Mark them explicitly so stale
+    # executions cannot remain PROCESSING indefinitely and can be safely reclaimed.
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("""
+            UPDATE public.telegram_inbox
+            SET status = 'FAILED'
+            WHERE status = 'PROCESSING'
+              AND locked_at < NOW() - make_interval(secs => :lease_seconds)
+        """), {"lease_seconds": telegram_idempotency.lease_timeout_seconds})
+        db.commit()
 
     # 2. Normalize messages and callback queries before any LR2/LR6 routing.
     raw_body = guard_req.body or {}

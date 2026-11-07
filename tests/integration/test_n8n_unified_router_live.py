@@ -63,7 +63,7 @@ def send_to_router(message_text, message_id=None, chat_id=12345):
         "message": {
             "message_id": message_id,
             "text": message_text,
-            "chat": {"id": chat_id},
+            "chat": {"id": chat_id, "type": "private"},
             "from": {"id": chat_id, "first_name": "ForensicTester"}
         }
     }
@@ -145,3 +145,11 @@ def test_router_scenario_4_and_5_rag_query():
         assert ("документ" in resp_text.lower() or "базі знань" in resp_text.lower() or "джерела" in resp_text.lower())
     finally:
         _set_bot_mode("LR2")
+
+
+@pytest.mark.integration
+def test_deployed_router_full_lr2_lr6_roundtrip():
+    """Realistic messages and callbacks must complete through deployed n8n, including RAG failure fallback."""
+    _require_live_n8n()
+    from tools.check_telegram_routing import main
+    assert main() == 0

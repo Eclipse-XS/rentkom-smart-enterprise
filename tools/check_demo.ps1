@@ -153,7 +153,18 @@ try {
     $hasDegraded = $true
 }
 
-# --- 6. Overall System Classification ---
+# --- 7. Telegram Routing Acceptance ---
+Write-Host "`n--- 7. Telegram LR2/LR6 Routing Acceptance ---" -ForegroundColor Yellow
+$routingResult = & $PythonExe "$ProjectRoot\tools\check_telegram_routing.py" 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "PASS Deployed n8n completed LR2 -> LR6 -> AI answer -> LR2 routing" -ForegroundColor Green
+    Write-Host "     $routingResult" -ForegroundColor Cyan
+} else {
+    Write-Host "FAIL Telegram user-facing routing acceptance: $routingResult" -ForegroundColor Red
+    $hasCoreFailure = $true
+}
+
+# --- 8. Overall System Classification ---
 Write-Host "`n============================================================" -ForegroundColor Cyan
 Write-Host "  RENTKOM SYSTEM CLASSIFICATION & VERDICT" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan

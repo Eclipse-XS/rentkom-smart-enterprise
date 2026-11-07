@@ -21,6 +21,7 @@ workflows:
         description: "Pure AI/RAG assistant: Knowledge base grounded Q&A over corporate documents, dialog memory, and source attribution without menu interception."
     expected_state: published
     required: true
+    reconcile_content: true
     trigger_type: webhook
     triggers:
       - name: "Telegram Ingress"

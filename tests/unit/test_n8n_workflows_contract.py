@@ -6,6 +6,7 @@ from core.models import NotificationOutbox
 from core.services.outbox_service import process_outbox, SMTPTransportAdapter
 from core.config import settings
 from tests.integration.test_smtp_delivery import LocalTestSMTPServer
+from tools.reconcile_automation import _workflow_content
 
 WORKFLOW_DIR = "SMART_ENTERPRISE/automation/n8n"
 
@@ -19,6 +20,14 @@ EXPECTED_WORKFLOW_FILES = {
     "telegram_rule_bot.json",
     "unified_telegram_router.json",
 }
+
+
+def test_workflow_content_comparison_ignores_generated_metadata_but_detects_executable_drift():
+    workflow = {"name": "Router", "nodes": [{"name": "RAG"}], "connections": {}, "settings": {}}
+    exported = [json.loads(json.dumps(workflow)) | {"versionId": "generated", "updatedAt": "later"}]
+    assert _workflow_content(workflow) == _workflow_content(exported)
+    exported[0]["nodes"][0]["name"] = "Stale RAG"
+    assert _workflow_content(workflow) != _workflow_content(exported)
 
 
 def test_all_eight_n8n_workflows_valid_json_and_zero_localhost_urls():
@@ -70,6 +79,14 @@ def test_single_authoritative_active_telegram_router():
     telegram_ingress = next(n for n in unified["nodes"] if n["name"] == "Telegram Ingress")
     assert telegram_ingress["parameters"]["authentication"] == "headerAuth"
     assert telegram_ingress["credentials"]["httpHeaderAuth"]["id"] == "RentkomTelegramWebhookSecret"
+    rag = next(n for n in unified["nodes"] if n["name"] == "Query RAG Core API")
+    rag_body = rag["parameters"]["jsonBody"]
+    assert "telegram_user_id" in rag_body
+    assert "telegram_chat_id" in rag_body
+    assert "telegram_chat_type" in rag_body
+    assert rag.get("onError") == "continueRegularOutput"
+    fallback = next(n for n in unified["nodes"] if n["name"] == "Send AI / Fallback Response")
+    assert "Консультація тимчасово недоступна" in fallback["parameters"]["jsonBody"]
 
 
 def test_feedback_workflow_isolated_from_postgresql_and_does_not_default_ratings(client):
