@@ -11,6 +11,7 @@ Covers:
 - SEC-T17: Authenticated administrator can access /api/v1/analytics/summary.
 - SEC-T18: /api/v1/telegram/webhook-mock returns 403 or 404 when ENVIRONMENT=production or ALLOW_TEST_WEBHOOK=false.
 - SEC-T19: Dockerfile defines non-root user.
+- SEC-T20: compose.yaml profile memberships align with documented architecture.
 """
 import re
 from pathlib import Path
@@ -158,3 +159,32 @@ def test_sec_t19_dockerfile_defines_non_root_user():
     # Verify user creation line exists
     useradd_match = re.search(r"useradd.*" + re.escape(username), dockerfile_text)
     assert useradd_match, f"User '{username}' is not explicitly created with useradd in Dockerfile"
+
+
+def test_sec_t20_compose_profile_memberships():
+    """SEC-T20: compose.yaml defines expected services per profile (demo, connected, full-ai, dedicated-worker)."""
+    text = _read_compose_text()
+    profiles = {}
+    current_service = None
+    for line in text.splitlines():
+        svc_match = re.match(r"^  ([a-zA-Z0-9_-]+):\s*$", line)
+        if svc_match:
+            current_service = svc_match.group(1)
+        elif current_service:
+            prof_match = re.search(r'profiles:\s*\[([^\]]+)\]', line)
+            if prof_match:
+                for p in re.findall(r'["\']([a-zA-Z0-9_-]+)["\']', prof_match.group(1)):
+                    profiles.setdefault(p, set()).add(current_service)
+
+    assert profiles.get("demo") == {"postgres", "business-api", "qdrant", "grafana"}
+    assert "n8n" not in profiles.get("demo", set())
+    assert "ollama" not in profiles.get("demo", set())
+
+    assert profiles.get("connected") == {"postgres", "business-api", "qdrant", "grafana", "n8n"}
+    assert "ollama" not in profiles.get("connected", set())
+
+    assert profiles.get("full-ai") == {"postgres", "business-api", "qdrant", "grafana", "n8n", "ollama"}
+
+    assert profiles.get("dedicated-worker") == {"postgres", "business-api", "qdrant", "grafana", "outbox-worker"}
+    assert "n8n" not in profiles.get("dedicated-worker", set())
+    assert "ollama" not in profiles.get("dedicated-worker", set())

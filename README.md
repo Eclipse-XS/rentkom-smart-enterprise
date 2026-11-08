@@ -22,6 +22,17 @@ Rentkom is a local, reproducible demonstration of business workflows for a real-
 
 The notification outbox provides **at-least-once delivery**, not an exactly-once guarantee. The RAG assistant is evaluated on a limited test dataset; evaluation scores are not guarantees about unseen questions.
 
+## Demo
+
+![Rentkom business analytics dashboard](docs/assets/grafana-business.png)
+*Figure 1: Running Grafana Business Analytics dashboard displaying the operational funnel, request statuses, CSAT satisfaction scores, and intake trends.*
+
+![Rentkom technical observability dashboard](docs/assets/grafana-observability.png)
+*Figure 2: Technical Observability dashboard tracking transactional outbox health, notification delivery attempts, mock and provider delivery status, and system audit events.*
+
+![Rentkom unified Telegram router workflow in n8n](docs/assets/n8n-workflow.png)
+*Figure 3: Unified Telegram router workflow in the n8n editor, orchestrating inbound updates, deduplication guards, and routing between menu handlers and RAG consultation endpoints (workflow structure visualization; external messaging requires configured provider credentials).*
+
 ## Architecture
 
 ```mermaid
