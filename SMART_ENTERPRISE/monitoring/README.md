@@ -1,28 +1,35 @@
-# Модуль моніторингу та візуалізації (`monitoring/`)
+# Grafana monitoring
 
-## Опис
-Цей каталог містить конфігураційні файли для системи візуалізації та бізнес-аналітики **Grafana Enterprise 13.2.3** (ЛР5):
-- `dashboards/real_estate_monitoring.json` — експорт дашборду моніторингу бізнес-процесів агентства нерухомості;
-- `provisioning/datasources.yml` — декларативний маніфест автоматичного підключення джерела даних PostgreSQL 18.
+This directory contains Grafana dashboards and the provisioning configuration used by the Docker Compose deployment.
 
----
+## Dashboards
 
-## Архітектура дашборду
-Дашборд реалізує гібридну схему отримання даних:
-1. **Панель 5 (Bar Chart):** Розподіл популярності категорій нерухомості.
-   - *Джерело:* PostgreSQL 18 (прямий SQL-запит до `real_estate_requests`).
-2. **Панелі 1–3 (Stat Cards):**
-   - Середня оцінка сервісу агентства.
-   - Середня оцінка кваліфікації рієлтора.
-   - Загальна кількість звернень клієнтів.
-   - *Джерело:* n8n REST API (`/webhook/monitoring-api` через плагін Infinity).
-3. **Панель 4 (Time Series):** Динаміка оцінок клієнтів у часі.
-   - *Джерело:* n8n REST API (`/webhook/monitoring-api` через плагін Infinity).
+| File | Panels | Purpose |
+| --- | ---: | --- |
+| `dashboards/business_analytics.json` | 10 | Requests, statuses, property types, feedback, and activity trends |
+| `dashboards/real_estate_monitoring.json` | 5 | Earlier real-estate and feedback overview retained alongside newer dashboards |
+| `dashboards/technical_observability.json` | 11 | Notification backlog, delivery attempts, retries, failures, and audit events |
+| **Total** | **26** | Three versioned dashboard definitions |
 
----
+The exported dashboard files describe panel configuration. They do not establish that every panel currently receives live data from external providers.
 
-## Оптимізація та усунення помилок («No data»)
-У ході технічного аудиту було виявлено та усунено причини виникнення статусу `No data`:
-1. **Зниження частоти оновлення:** Параметр `refresh` встановлено на `1m` (замість агресивних 10 секунд), що запобігає переповненню безкоштовних квот Google Sheets API (`429 Too Many Requests`).
-2. **Часовий фільтр:** За замовчуванням встановлено коректне часове вікно відображення історичних даних (`now-30d` до `now`).
-3. **CORS Headers:** У n8n REST API налаштовано заголовок `Access-Control-Allow-Origin: *`.
+## Provisioning
+
+The active Docker volume mounts are defined in [`compose.yaml`](../../compose.yaml):
+
+- `provisioning/dashboards/dashboards.yml` provisions dashboard files from `/var/lib/grafana/dashboards`.
+- `provisioning/datasources/datasources.yml` provisions PostgreSQL (`lab5-postgres`) and the authenticated Business Core API datasource (`rentkom-core-api`).
+- `provisioning/datasources.yml` is a second copy in the repository, but the current Compose definition mounts the nested `provisioning/datasources/` directory.
+
+The Compose image is `grafana/grafana:11.3.0`, with PostgreSQL `postgres:16-alpine`. These versions describe the containerized demo and should not be confused with historical locally installed tools used during the coursework.
+
+## Start and inspect
+
+```bash
+cp .env.example .env
+docker compose --profile demo up -d --build
+```
+
+Grafana runs at `http://127.0.0.1:3000`. Its credentials are configured by `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD` in `.env`. Demo credentials must not be reused for shared or public deployments.
+
+See the [root README](../../README.md) for architecture and demo scope and [deployment guide](../../DEPLOYMENT.md) for setup details.

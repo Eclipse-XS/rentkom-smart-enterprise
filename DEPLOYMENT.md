@@ -1,121 +1,83 @@
-# Керівництво з розгортання «Рентком Смарт Ентерпрайз» (Deployment Guide)
+# Rentkom deployment guide
 
-## 1. Системні вимоги
+This guide describes how to run the repository locally and what extra configuration is needed for connected services. The default setup is a **portfolio demo**, not a public production deployment.
 
-- **Операційна система:** Linux, macOS, або Windows 10/11 (WSL2).
-- **Платформа контейнеризації:** Docker Engine 24.0+ та Docker Compose v2.20+.
-- **Локальне виконання (без Docker):** Python 3.11–3.13, PostgreSQL 16+ (або SQLite у демо-режимі), Qdrant v1.12+, Ollama 0.3+.
-- **Мінімальні ресурси:** 4 GB RAM (8 GB для `full-ai`), 2 CPU Cores, 5 GB вільного місця на диску.
+## Requirements
 
----
+- Docker Engine / Docker Desktop with Docker Compose v2
+- Git and a shell with permission to run Docker
+- Python 3.13 and project requirements only if using Python maintenance tools from the host
 
-## 2. Режими та профілі запуску (`demo` vs `connected` vs `production`)
+Run the commands below from the root of the cloned repository.
 
-Система підтримує чотири модульні профілі Docker Compose та три режими середовища (`ENVIRONMENT`):
+## Local demo: API, database, Grafana, Qdrant
 
-| Профіль Docker Compose | Сервіси, що запускаються | Призначення | Потрібні секрети |
-|---|---|---|:---:|
-| **`demo`** *(за замовчуванням)* | `postgres`, `business-api`, `grafana`, `qdrant` | Локальна демонстрація портфоліо, аналітика, REST API, mock-сповіщення | **Жодних** |
-| **`connected`** | `demo` + `n8n` | Інтеграція зі шлюзом автоматизації n8n, live Telegram webhooks та SMTP | `INTERNAL_API_KEY`, `ADMIN_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_SECRET_TOKEN`, SMTP |
-| **`full-ai`** | `connected` + `ollama` | Повний локальний контур RAG з контейнеризованим Ollama | 8 GB RAM, GPU (опціонально) |
-| **`dedicated-worker`** | `outbox-worker` | Окремий фоновий процес обробки Transactional Outbox (коли `RUN_OUTBOX_WORKER_IN_LIFESPAN=false`) | Як у поточного режиму |
-
-### Режими безпеки (`ENVIRONMENT`)
-- **`demo` / `development` / `test`**: Дозволяє використання `/api/v1/telegram/webhook-mock`, `/api/v1/telegram/mock-dispatcher` та імітованого транспорту сповіщень (`NOTIFICATION_PROVIDER=mock`).
-- **`connected` / `production`**:
-  - Примусово вимикає демонстраційні та mock-ендпоінти (`HTTP 403`).
-  - Під час старту (`settings.validate_runtime_security()`) перевіряє наявність надійних ключів `ADMIN_API_KEY` та `INTERNAL_API_KEY` (мінімум 24 символи, заборона демо-значень), забороняє `ALLOW_TEST_WEBHOOK=true` та `NOTIFICATION_PROVIDER=mock` у `production`.
-  - Ендпоінт аналітики (`GET /api/v1/analytics/summary`) вимагає авторизації адміністратора (`X-Admin-Token`) або внутрішнього токена.
-  - Анонімні заявки (`POST /api/v1/requests/`) проходять через захисний шлюз неперевірених лідів (HTTP 202 Accepted, opaque submission ID) без розкриття персональних даних клієнтів (SEC-01/02).
-  - База даних розділяє привілеї: застосунок працює під `rentkom_app`; n8n працює під `rentkom_n8n`, має DDL лише у схемі `n8n` і не має доступу до бізнес-таблиць `public`.
-  - Для наявного volume після встановлення `RENTKOM_APP_PASSWORD` і `RENTKOM_N8N_PASSWORD` виконайте `docker compose exec postgres bash /docker-entrypoint-initdb.d/02_roles.sh`; видалення volume не потрібне.
-
----
-
-## 3. Швидкий запуск у Docker
-
-### Крок 1. Клонування та налаштування змінних оточення
 ```bash
 cp .env.example .env
-```
-*(Для профілю `demo` редагувати `.env` не обов'язково; для `connected` або `production` обов'язково заповніть секретні ключі).*
-
-### Крок 2. Запуск контейнерів
-```bash
-# Демонстраційний профіль:
 docker compose --profile demo up -d --build
-
-# Або через утиліту керування:
-python tools/manage.py up --profile demo
+docker compose exec business-api python tools/seed_demo_data.py
 ```
 
-### Крок 3. Перевірка доступності сервісів (Liveness & Readiness)
-- **FastAPI Interactive Docs (Swagger):** `http://localhost:8000/docs`
-- **Liveness Probe:** `http://localhost:8000/api/v1/health/live`
-- **Readiness Probe (перевірка БД):** `http://localhost:8000/api/v1/health/ready`
-- **Full Diagnostics Endpoint:** `http://localhost:8000/api/v1/health`
-- **Grafana Dashboards:** `http://localhost:3000` (Логін та пароль задаються через `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` у `.env`)
-- **Qdrant Vector Web UI:** `http://localhost:6333/dashboard`
+| Service | Local URL |
+| --- | --- |
+| FastAPI Swagger | http://127.0.0.1:8000/docs |
+| API readiness | http://127.0.0.1:8000/api/v1/health/ready |
+| Grafana | http://127.0.0.1:3000 |
+| Qdrant | http://127.0.0.1:6333/dashboard |
 
----
-
-## 4. Локальне розгортання без Docker (Standalone Python)
-
-Якщо Docker Desktop вимкнено або недоступний, система підтримує повний цикл локальної перевірки:
+To inspect running services:
 
 ```bash
-# 1. Створення віртуального оточення
-python -m venv .venv
-source .venv/bin/activate  # На Windows: .venv\Scripts\activate
-
-# 2. Встановлення залежностей
-pip install -r requirements.txt
-
-# 3. Наповнення демо-бази даних
-python tools/seed_demo_data.py
-
-# 4. Переіндексація бази знань RAG у Qdrant (за наявності Qdrant + Ollama)
-python tools/reindex_knowledge_base.py
-
-# 5. Запуск сервера бізнес-правил
-python tools/manage.py up
+docker compose --profile demo ps
+docker compose --profile demo logs --tail=100 business-api
 ```
 
----
+The `demo` profile uses mock notification behavior. It does not start n8n or Ollama; consequently, do not describe it as a live Telegram or fully initialized RAG demo. The demo credentials in `.env.example` are local defaults, not secure deployment settings.
 
-## 5. Резервне копіювання та відновлення PostgreSQL (`pg_dump` / `psql`)
+## Compose profiles and environment modes
 
-На відміну від файлового копіювання SQLite, для PostgreSQL використовується утиліта логічного резервного копіювання `tools/backup_restore.py` (інтегрована в `tools/manage.py`):
+The four Compose profiles control which services start:
+
+| Profile | Additional components | Usage |
+| --- | --- | --- |
+| `demo` | FastAPI, PostgreSQL, Grafana, Qdrant | Local API and monitoring walkthrough |
+| `connected` | Adds n8n | Workflow orchestration with configured credentials |
+| `full-ai` | Adds n8n and Ollama | Model serving for RAG, after separate model/index preparation |
+| `dedicated-worker` | Separate outbox worker | Set `RUN_OUTBOX_WORKER_IN_LIFESPAN=false` when running this profile |
+
+`ENVIRONMENT` is a **separate application setting**; a Compose profile alone does not set the security mode. To use connected behavior, set `ENVIRONMENT=connected` in `.env` and replace the example API keys with strong random values.
+
+For Telegram, configure `TELEGRAM_BOT_TOKEN`, `TELEGRAM_SECRET_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, and the appropriate n8n webhook configuration. For SMTP, configure the `SMTP_*` variables and select the intended `NOTIFICATION_PROVIDER`.
+
+The n8n credential bootstrap script is [`scripts/bootstrap_n8n_credentials.py`](scripts/bootstrap_n8n_credentials.py). It expects `INTERNAL_API_KEY`, `TEST_WEBHOOK_SECRET`, and `TELEGRAM_SECRET_TOKEN`. It imports header credentials into the running n8n container and does not replace provider-side webhook setup. Configure credentials before expecting end-to-end messages to reach a real Telegram account.
+
+Do not publish the `.env` file, expose default credentials, or bind local data services to untrusted interfaces.
+
+## RAG preparation and limits
+
+The knowledge base consists of six demonstration PDF/DOCX documents in `SMART_ENTERPRISE/ai/knowledge_base/source/`. The retrieval and generation components use Qdrant and Ollama. Model availability and an indexed collection are prerequisites for meaningful RAG responses.
+
+A `full-ai` Compose startup alone does **not** prove that models are downloaded or that the Qdrant collection is indexed. The repository includes `scripts/ensure_ollama_models.py` and `tools/reindex_knowledge_base.py` for these steps; run them from an environment that can reach Ollama/Qdrant and read the source documents. The current API Dockerfile does not bundle the document source directory, so running the reindexer **inside the default API image is not supported without an additional mount or image change**.
+
+Recorded model quality and latency measurements are in [`evaluation/rag_eval_results.json`](evaluation/rag_eval_results.json) and [`docs/audit/RAG_EVALUATION.md`](docs/audit/RAG_EVALUATION.md).
+
+## Tests and health checks
 
 ```bash
-# Створення резервної копії PostgreSQL або SQLite:
-python tools/manage.py backup --db-url "postgresql://postgres:password@127.0.0.1:5432/rentkom" --output-dir backups
-
-# Перевірка відновлення у тестову ізольовану базу даних (обов'язково має містити test/disposable/temp у назві):
-python tools/manage.py restore --backup-file backups/rentkom_pg_backup_YYYYMMDD_HHMMSS.sql --target-db-url "postgresql://postgres:password@127.0.0.1:5432/rentkom_test"
+python -m pytest tests/unit tests/security -v --tb=short
+docker compose --profile demo config --quiet
 ```
-> **Захист даних:** Команда `restore` використовує `tests/safety.py` (`assert_safe_test_database`) і категорично відмовляється перезаписувати робочі або системні бази даних (`postgres`, `rentkom`, `lab4_real_estate`).
 
----
+The broader integration suite requires the dependencies appropriate to each test. Destructive database tests must use an explicitly isolated test database and the safeguards in `tests/safety.py`. Do not execute integration database tests against real agency data.
 
-## 6. Налаштування облікових записів n8n (Credentials Bootstrap)
+FastAPI exposes `/api/v1/health/live`, `/api/v1/health/ready`, and `/api/v1/health`. Liveness and database readiness do not mean that all external integrations or local AI services are ready.
 
-Для роботи підсистеми автоматизації (`SMART_ENTERPRISE/automation/n8n/*.json`) у режимах `connected` або `demo`:
+## Shutdown and recovery
 
-### Варіант А. Автоматичний CLI імпорт (Рекомендовано)
-```bash
-python scripts/bootstrap_n8n_credentials.py
-```
-Скрипт вимагає `INTERNAL_API_KEY`, `TEST_WEBHOOK_SECRET` і `TELEGRAM_SECRET_TOKEN`, імпортує три header credentials через `n8n import:credentials` та видаляє тимчасовий файл.
-
-### Trusted configuration
-`N8N_BLOCK_ENV_ACCESS_IN_NODE=true` залишається увімкненим. Workflow expressions не читають `$env`: внутрішня авторизація та ingress secrets надходять з n8n credentials, адреса API є внутрішнім Compose DNS endpoint, а `TELEGRAM_ADMIN_CHAT_ID` задається як n8n project variable (`$vars`).
-
----
-
-## 7. Зупинка сервісів
 ```bash
 docker compose --profile demo --profile connected --profile full-ai --profile dedicated-worker down
-# Або:
-python tools/manage.py down
 ```
+
+Do not add `--volumes` unless you intend to delete local persisted data. Database backup and restore utilities are available through `tools/manage.py` and `tools/backup_restore.py`; test restores only against isolated disposable targets.
+
+The historical acceptance evidence and remaining limitations are under [`docs/audit/`](docs/audit/), especially [`REMAINING_RISKS.md`](docs/audit/REMAINING_RISKS.md).
