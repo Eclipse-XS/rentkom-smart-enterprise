@@ -42,6 +42,20 @@ jobs:
           docker compose --profile connected config --quiet
           docker compose --profile full-ai config --quiet
           docker compose --profile dedicated-worker config --quiet
+          python -c '
+          import subprocess
+          checks = {
+              "demo": {"postgres", "business-api", "qdrant", "grafana"},
+              "connected": {"postgres", "business-api", "qdrant", "grafana", "n8n"},
+              "full-ai": {"postgres", "business-api", "qdrant", "grafana", "n8n", "ollama"},
+              "dedicated-worker": {"postgres", "business-api", "qdrant", "grafana", "outbox-worker"},
+          }
+          for prof, expected in checks.items():
+              out = subprocess.check_output(["docker", "compose", "--profile", prof, "config", "--services"], text=True)
+              actual = set(filter(None, out.strip().split()))
+              assert actual == expected, f"{prof}: got {actual} != {expected}"
+          print("Profile memberships verified successfully.")
+          '
 
       - name: Build and Scan Hardened n8n Image
         run: |

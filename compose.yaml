@@ -139,7 +139,7 @@ services:
     profiles: ["demo", "connected", "full-ai", "dedicated-worker"]
 
   # ----------------------------------------------------------------------------
-  # 4. Grafana Dual-Dashboard Observability Layer
+  # 4. Grafana Observability Layer (Three Dashboards)
   # ----------------------------------------------------------------------------
   grafana:
     image: grafana/grafana:11.3.0
@@ -219,7 +219,7 @@ services:
       - ./SMART_ENTERPRISE/automation/n8n:/workflows:ro
     networks:
       - rentkom-net
-    profiles: ["demo", "connected", "full-ai"]
+    profiles: ["connected", "full-ai"]
 
   # ----------------------------------------------------------------------------
   # 6. Containerized Ollama Inference (Full AI Mode)
