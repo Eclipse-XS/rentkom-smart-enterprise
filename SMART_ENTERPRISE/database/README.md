@@ -1,38 +1,34 @@
-# Модуль реляційної бази даних (`database/`)
+# PostgreSQL schema
 
-## Опис
-Цей каталог містить артефакти для реляційної СУБД **PostgreSQL 18**:
-- Схему створення таблиць, обмежень та індексів (`schema.sql`);
-- Набір перевірочних запитів для аудиту та контролю цілісності (`verify.sql`).
+This directory contains the database bootstrap, legacy migration, and verification SQL used by Rentkom's FastAPI business core.
 
-База даних використовується як транзакційне ядро в **ЛР4** (збереження заявок на консультацію) та як пряме джерело SQL-даних для дашборду Grafana в **ЛР5**.
+## Files
 
----
+| File | Purpose |
+| --- | --- |
+| `init_db.sql` | Creates the current relational schema, indexes, and compatibility/analytics views |
+| `schema_v2.sql` | Migration and compatibility logic for earlier real-estate request data |
+| `schema.sql` | Historical schema definition retained for reference |
+| `verify.sql` | SQL checks for the relational data |
 
-## Структура бази даних
-- **Назва бази даних:** `lab4_real_estate`
-- **Користувач:** `lab4_user`
-- **Порт:** `5432` (localhost)
-- **Таблиця:** `public.real_estate_requests`
+## Current bootstrap tables
 
-### Схема таблиці `real_estate_requests`:
-| Колонка | Тип даних | Опис |
-|---|---|---|
-| `id` | `BIGSERIAL PRIMARY KEY` | Унікальний автоінкрементний ідентифікатор заявки |
-| `full_name` | `VARCHAR(150) NOT NULL` | Прізвище, ім'я та по батькові клієнта |
-| `phone` | `VARCHAR(30) NOT NULL` | Контактний номер телефону (валідований) |
-| `request_purpose` | `VARCHAR(50) NOT NULL` | Ціль: «Хочу купити», «Хочу орендувати», «Хочу продати», «Хочу здати в оренду» |
-| `property_type` | `VARCHAR(50) NOT NULL` | Тип об'єкта: «Квартира», «Будинок», «Комерційне приміщення», «Земля» |
-| `property_location` | `VARCHAR(255) NOT NULL` | Бажане місцезнаходження (район, місто) |
-| `consultation_date` | `DATE NOT NULL` | Бажана дата консультації з рієлтором |
-| `additional_comments`| `TEXT` | Додаткові побажання клієнта (може бути NULL) |
-| `created_at` | `TIMESTAMPTZ DEFAULT NOW()` | Системна часова мітка створення запису |
-| `source_row_id` | `VARCHAR(255) UNIQUE` | Детермінований композитний хеш для забезпечення ідемпотентності |
+`init_db.sql` creates the following nine tables:
 
----
+1. `customers`
+2. `service_requests`
+3. `request_status_history`
+4. `customer_feedbacks`
+5. `notification_outbox`
+6. `notification_attempts`
+7. `audit_events`
+8. `telegram_inbox`
+9. `inbound_lead_submissions`
 
-## Команди перевірки в PowerShell
-Для швидкої перевірки вмісту таблиці виконайте:
-```powershell
-& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -h 127.0.0.1 -p 5432 -U lab4_user -d lab4_real_estate -c "SELECT id, full_name, phone, request_purpose, property_type, created_at FROM real_estate_requests;"
-```
+The bootstrap also defines `real_estate_requests` as a compatibility view for earlier consumers. Do not describe it as the primary current table. The core application uses normalized records and tracks notification state separately.
+
+## Runtime configuration
+
+The Docker Compose demo uses `postgres:16-alpine` and the `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` configuration values. The application connects with a separate `rentkom_app` role initialized by `scripts/init-db.sh`. Local development may use a different PostgreSQL version, but the container image is the deployment reference.
+
+Use isolated databases for destructive integration tests. The test safety checks reject known application database names and require an explicit disposable test database. See [deployment instructions](../../DEPLOYMENT.md) and [tests/safety.py](../../tests/safety.py).
