@@ -163,14 +163,18 @@ def test_sec_t19_dockerfile_defines_non_root_user():
 
 def test_sec_t20_compose_profile_memberships():
     """SEC-T20: compose.yaml defines expected services per profile (demo, connected, full-ai, dedicated-worker)."""
-    import yaml
-    compose_data = yaml.safe_load(_read_compose_text())
-    services = compose_data.get("services", {})
+    text = _read_compose_text()
     profiles = {}
-    for svc_name, svc_cfg in services.items():
-        svc_profiles = svc_cfg.get("profiles", [])
-        for p in svc_profiles:
-            profiles.setdefault(p, set()).add(svc_name)
+    current_service = None
+    for line in text.splitlines():
+        svc_match = re.match(r"^  ([a-zA-Z0-9_-]+):\s*$", line)
+        if svc_match:
+            current_service = svc_match.group(1)
+        elif current_service:
+            prof_match = re.search(r'profiles:\s*\[([^\]]+)\]', line)
+            if prof_match:
+                for p in re.findall(r'["\']([a-zA-Z0-9_-]+)["\']', prof_match.group(1)):
+                    profiles.setdefault(p, set()).add(current_service)
 
     assert profiles.get("demo") == {"postgres", "business-api", "qdrant", "grafana"}
     assert "n8n" not in profiles.get("demo", set())
