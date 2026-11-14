@@ -47,20 +47,23 @@ class TelegramIdempotencyManager:
         return f"tg_fallback:{chat_id}:{msg_id}:{text_digest}"
 
     def parse_update_id(self, update: Dict[str, Any]) -> Tuple[int, int, str]:
-        """Extracts (update_id, chat_id, message_text) with deterministic integer update_id."""
+        """Preserve real IDs; use deterministic negative IDs for missing update_id."""
         update_id = update.get("update_id")
         message = update.get("message") or {}
         chat_id = (message.get("chat") or {}).get("id") or 0
         text_content = (message.get("text") or "").strip()
 
         if update_id is None:
-            # Deterministic synthetic positive update_id from chat_id + message_id or text
+            # Deterministic synthetic update_id from the message identity or text.
             msg_id = message.get("message_id")
             if msg_id is not None:
-                update_id = abs(int(f"{chat_id}{msg_id}") % (2**60))
+                # Delimit the pair: concatenation aliases (1, 23) and (12, 3).
+                # Keep synthetic IDs negative, apart from Telegram's real IDs.
+                digest = hashlib.sha256(f"message:{int(chat_id)}:{int(msg_id)}".encode("utf-8")).hexdigest()
+                update_id = -(int(digest[:15], 16) + 1)
             else:
-                digest = hashlib.sha256(f"{chat_id}:{text_content}".encode("utf-8")).hexdigest()[:14]
-                update_id = int(digest, 16) % (2**60)
+                digest = hashlib.sha256(f"text:{int(chat_id)}:{text_content}".encode("utf-8")).hexdigest()
+                update_id = -(int(digest[:15], 16) + 1)
         else:
             update_id = int(update_id)
 
