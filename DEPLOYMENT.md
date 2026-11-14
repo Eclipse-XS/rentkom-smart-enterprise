@@ -74,6 +74,31 @@ FastAPI exposes `/api/v1/health/live`, `/api/v1/health/ready`, and `/api/v1/heal
 
 ## Shutdown and recovery
 
+### Telegram fallback-ID upgrade
+
+Real Telegram `update_id` values and existing text-only fallback IDs are unchanged.
+Requests without `update_id` but with `message_id` now use a delimited hash in a
+negative ID namespace, preventing concatenation collisions such as `(1, 23)` and
+`(12, 3)`. No database rows are moved or deleted.
+
+Pause ingress and drain/stop all old API and workflow workers before deploying
+this version; mixed versions can claim different IDs for the same new message.
+Keep the persisted inbox available throughout the upgrade. A matching completed
+legacy row returns its cached response without executing another delivery.
+Legacy rows in the same chat with changed text, failed delivery, or an expired
+processing lease return `Legacy Identity Review` and suppress automatic replay.
+An operator must reconcile those rows with notification/provider records before
+retrying; do not clear the inbox to resolve the review. Old rows do not store
+message IDs or synthetic-ID provenance, so ambiguous matches are deliberately
+held for review rather than assumed safe to send.
+
+The migration guard fails closed if its database lookup fails, including in demo
+mode. Memory-only operation cannot preserve deduplication across restarts. The
+inbox/outbox/provider boundary still requires reconciliation after a crash that
+occurs after sending but before completion is persisted; this change does not
+promise exactly-once external delivery. Validate the upgrade against an isolated
+PostgreSQL copy before a connected production deployment.
+
 ```bash
 docker compose --profile demo --profile connected --profile full-ai --profile dedicated-worker down
 ```

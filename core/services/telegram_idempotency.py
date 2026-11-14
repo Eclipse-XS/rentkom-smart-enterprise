@@ -40,6 +40,8 @@ class TelegramIdempotencyManager:
             return f"tg_update:{update_id}"
 
         message = update.get("message") or {}
+        if message.get("message_id") is not None:
+            return f"tg_update:{self.parse_update_id(update)[0]}"
         chat_id = (message.get("chat") or {}).get("id", "0")
         msg_id = message.get("message_id", "0")
         text_content = (message.get("text") or "").strip()
@@ -47,24 +49,55 @@ class TelegramIdempotencyManager:
         return f"tg_fallback:{chat_id}:{msg_id}:{text_digest}"
 
     def parse_update_id(self, update: Dict[str, Any]) -> Tuple[int, int, str]:
-        """Extracts (update_id, chat_id, message_text) with deterministic integer update_id."""
+        """Preserve real/text-only IDs; use negative IDs for message-ID fallbacks."""
         update_id = update.get("update_id")
         message = update.get("message") or {}
         chat_id = (message.get("chat") or {}).get("id") or 0
         text_content = (message.get("text") or "").strip()
 
         if update_id is None:
-            # Deterministic synthetic positive update_id from chat_id + message_id or text
+            # Deterministic synthetic update_id from the message identity or text.
             msg_id = message.get("message_id")
             if msg_id is not None:
-                update_id = abs(int(f"{chat_id}{msg_id}") % (2**60))
+                # Delimit the pair: concatenation aliases (1, 23) and (12, 3).
+                # Keep synthetic IDs negative, apart from Telegram's real IDs.
+                digest = hashlib.sha256(f"message:{int(chat_id)}:{int(msg_id)}".encode("utf-8")).hexdigest()
+                update_id = -(int(digest[:15], 16) + 1)
             else:
+                # Preserve existing text-only IDs: these had no concatenation bug.
                 digest = hashlib.sha256(f"{chat_id}:{text_content}".encode("utf-8")).hexdigest()[:14]
                 update_id = int(digest, 16) % (2**60)
         else:
             update_id = int(update_id)
 
         return update_id, int(chat_id), text_content
+
+    def _legacy_message_response(self, db, update, bot_id, chat_id, text_content):
+        """Suppress replays of persisted pre-upgrade message-ID fallbacks.
+
+        Legacy rows lack message_id/provenance. Never move them or re-execute
+        uncertain work; drain old workers before upgrading the ID scheme.
+        """
+        message_id = (update.get("message") or {}).get("message_id")
+        if update.get("update_id") is not None or message_id is None:
+            return None
+        legacy_id = abs(int(f"{chat_id}{message_id}") % (2**60))
+        row = db.query(TelegramInbox).filter(
+            TelegramInbox.bot_id == bot_id, TelegramInbox.update_id == legacy_id,
+        ).first()
+        if row is None or row.chat_id != chat_id:
+            return None
+        if row.status == "COMPLETED" and row.response_payload and row.message_text == text_content:
+            cached = CachedResponse(**row.response_payload)
+            cached.is_duplicate = True
+            return cached
+        # Text changes, stale leases and failed deliveries cannot establish that
+        # another notification is safe. Keep the legacy row for operator review.
+        return CachedResponse(
+            route="Legacy Identity Review",
+            response_text="Legacy Telegram delivery requires operator review; automatic replay suppressed.",
+            is_duplicate=True,
+        )
 
     async def acquire_or_get_cached(
         self,
@@ -81,6 +114,9 @@ class TelegramIdempotencyManager:
         if db is not None:
             try:
                 update_id, chat_id, text_content = self.parse_update_id(update_data or {})
+                legacy = self._legacy_message_response(db, update_data or {}, bot_id, chat_id, text_content)
+                if legacy is not None:
+                    return False, legacy
                 dialect_name = db.get_bind().dialect.name if db.get_bind() is not None else "postgresql"
 
                 if dialect_name != "postgresql":
@@ -185,11 +221,21 @@ class TelegramIdempotencyManager:
                     logger.info(f"[IDEMPOTENCY-DB] Claimed processing lease for update {update_id} (row {claim_res[0]}).")
                     return True, None
 
+                # A lost authoritative DB claim must never fall through to a
+                # process-local guard and execute the same delivery again.
+                return False, CachedResponse(
+                    route="In Progress", response_text="Запит обробляється, зачекайте будь ласка...",
+                    is_duplicate=True,
+                )
+
             except Exception as e:
                 logger.warning(f"[IDEMPOTENCY-DB] Database lock check failed ({e}).")
                 db.rollback()
-                if not settings.is_safe_demo_or_dev:
-                    raise RuntimeError(f"Authoritative database idempotency lease failed in production: {e}")
+                message_fallback = (update_data or {}).get("update_id") is None and (
+                    ((update_data or {}).get("message") or {}).get("message_id") is not None
+                )
+                if message_fallback or not settings.is_safe_demo_or_dev:
+                    raise RuntimeError(f"Authoritative database idempotency lease failed: {e}") from e
                 logger.info("[IDEMPOTENCY-DB] Falling back to memory guard for safe demo/development environment.")
 
         # In-memory fallback
